@@ -1,7 +1,7 @@
 // Database-backed Authentication System
 // Uses backend API for user management
 
-import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { GoogleAuthProvider, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile, type User } from 'firebase/auth';
 import { firebaseAuth, firebaseEnabled } from './firebase';
 
 export interface LocalUser {
@@ -48,6 +48,23 @@ function createUserObject(data: AuthResponse['user'], token: string): LocalUser 
   };
 }
 
+async function createFirebaseUser(firebaseUser: User): Promise<LocalUser> {
+  const token = await firebaseUser.getIdToken();
+  const tokenResult = await firebaseUser.getIdTokenResult();
+  const user = createUserObject({
+    uid: firebaseUser.uid,
+    email: firebaseUser.email || '',
+    displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Urban Tanker user',
+    phoneNumber: firebaseUser.phoneNumber,
+    role: (tokenResult.claims.role as LocalUser['role'] | undefined) || 'customer'
+  }, token);
+  currentUser = user;
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  notifyAuthStateChange(user);
+  return user;
+}
+
 async function makeAuthRequest(endpoint: string, body: Record<string, unknown>) {
   try {
     const response = await fetch(`${API_URL}/api/auth${endpoint}`, {
@@ -76,25 +93,14 @@ export async function signInWithGoogle(): Promise<LocalUser> {
   }
 
   const result = await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
-  const firebaseUser = result.user;
-  const token = await firebaseUser.getIdToken();
-  const tokenResult = await firebaseUser.getIdTokenResult();
-  const user = createUserObject({
-    uid: firebaseUser.uid,
-    email: firebaseUser.email || '',
-    displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Urban Tanker user',
-    phoneNumber: firebaseUser.phoneNumber,
-    role: (tokenResult.claims.role as LocalUser['role'] | undefined) || 'customer'
-  }, token);
-
-  currentUser = user;
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-  notifyAuthStateChange(user);
-  return user;
+  return createFirebaseUser(result.user);
 }
 
 export async function signInWithPassword(email: string, password: string): Promise<LocalUser> {
+  if (firebaseAuth) {
+    const result = await signInWithEmailAndPassword(firebaseAuth, email, password);
+    return createFirebaseUser(result.user);
+  }
   const response = await makeAuthRequest('/login', { email, password });
   
   const user = createUserObject(response.user, response.idToken);
@@ -113,6 +119,11 @@ export async function registerWithPassword(
   password: string,
   displayName?: string
 ): Promise<LocalUser> {
+  if (firebaseAuth) {
+    const result = await createUserWithEmailAndPassword(firebaseAuth, email, password);
+    if (displayName) await updateProfile(result.user, { displayName });
+    return createFirebaseUser(result.user);
+  }
   const response = await makeAuthRequest('/register', {
     email,
     password,

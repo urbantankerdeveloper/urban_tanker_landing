@@ -8,7 +8,7 @@ import { CustomerHomeShell } from './components/CustomerHomeShell';
 import { LoadingSkeleton } from './components/LoadingSkeleton';
 import { Toast } from './components/Toast';
 import { VendorPortal } from './components/VendorPortal';
-import { contentClientId, refreshCloudState, subscribeToCloudState, subscribeToContent } from './cloudStore';
+import { contentClientId, getUserProfile, refreshCloudState, subscribeToCloudState, subscribeToContent, subscribeToOperations } from './cloudStore';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent } from './secureCache';
 import { firebaseEnabled } from './firebase';
 import { hydrateCloudState, hydrateContent, useAppStore } from './store';
@@ -32,6 +32,7 @@ export function App() {
   useEffect(() => {
     let unsubscribeCloud = () => undefined;
     let unsubscribeContent = () => undefined;
+    let unsubscribeOperations = () => undefined;
     let refreshTimer: number | undefined;
     readEncryptedContent<Partial<AppContent>>(contentClientId).then(({ value }) => {
       if (value) hydrateContent(value);
@@ -54,10 +55,16 @@ export function App() {
       const cachedData = cached.value || useAppStore.getState().data;
       const claims = await user.getIdTokenResult();
       const claimRole = claims.claims.role as Role | undefined;
-      useAppStore.setState({ data: { ...cachedData, profile: { name: user.displayName || cachedData.profile?.name || user.email?.split('@')[0] || 'Urban Tanker user', email: user.email || cachedData.profile?.email || '', phone: user.phoneNumber || cachedData.profile?.phone || '' }, role: claimRole || cachedData.role }, bookingDraft: cachedData.booking });
+      const userProfile = await getUserProfile();
+      useAppStore.setState({ data: { ...cachedData, profile: { name: user.displayName || userProfile?.name || cachedData.profile?.name || user.email?.split('@')[0] || 'Urban Tanker user', email: user.email || userProfile?.email || cachedData.profile?.email || '', phone: user.phoneNumber || userProfile?.phone || cachedData.profile?.phone || '' }, role: claimRole || userProfile?.role || cachedData.role }, bookingDraft: cachedData.booking });
       subscribeToCloudState(cloudState => hydrateCloudState(cloudState), () => notify('Firebase sync is unavailable. Continuing with cached data.'))
         .then(stop => { unsubscribeCloud = stop; })
         .catch(() => notify('Unable to sync Firebase data.'));
+      subscribeToOperations(operations => {
+        useAppStore.setState(state => ({ data: { ...state.data, orders: operations.orders.length ? operations.orders : state.data.orders, vendors: operations.vendors.length ? operations.vendors : state.data.vendors } }));
+      }, () => notify('Shared operations data is unavailable. Continuing with cached data.'))
+        .then(stop => { unsubscribeOperations = stop; })
+        .catch(() => undefined);
       refreshTimer = window.setInterval(() => {
         readEncryptedState<typeof data>().then(({ expired }) => {
           if (expired) refreshCloudState().then(hydrateCloudState).catch(() => notify('Unable to refresh Firebase data.'));
@@ -66,7 +73,7 @@ export function App() {
       setHydrated(true);
     };
     void hydrateUser();
-    return () => { unsubscribeCloud(); unsubscribeContent(); if (refreshTimer) window.clearInterval(refreshTimer); };
+    return () => { unsubscribeCloud(); unsubscribeContent(); unsubscribeOperations(); if (refreshTimer) window.clearInterval(refreshTimer); };
   }, [authLoading, notify, setHydrated, user]);
 
   if (authLoading || !isHydrated) return <LoadingSkeleton />;

@@ -43,9 +43,13 @@ export interface Order {
   created: string;
   couponCode?: string;
   discount?: number;
+  ownerUid?: string;
+  assignedVendorUid?: string;
 }
 
 export interface Vendor {
+  uid?: string;
+  email?: string;
   name: string;
   driver: string;
   zone: string;

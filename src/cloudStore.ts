@@ -1,6 +1,6 @@
 import { get, onValue, ref, set, type Unsubscribe } from 'firebase/database';
 import { firebaseAuth, firebaseEnabled, realtimeDatabase } from './firebase';
-import type { Profile, Role } from './types';
+import type { AppData, Profile, Role, Vendor } from './types';
 
 export type CloudState = Record<string, unknown>;
 export type CloudStateHandler = (state: CloudState) => void;
@@ -14,7 +14,7 @@ function withoutUndefined<T>(value: T): T {
   return value;
 }
 
-interface UserProfile extends Profile {
+export interface UserProfile extends Profile {
   role: Role;
   createdAt: number;
   updatedAt: number;
@@ -27,6 +27,7 @@ const stateRef = () => {
 };
 export const contentClientId = import.meta.env.VITE_CONTENT_CLIENT_ID || 'urban-tanker';
 const contentRef = (clientId: string) => ref(realtimeDatabase!, `customers/${clientId}/content/config`);
+const operationsRef = () => ref(realtimeDatabase!, 'operations');
 
 export async function subscribeToContent(clientId: string, onContent: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
   if (!firebaseEnabled || !realtimeDatabase) { onError(new Error('Firebase Realtime Database is not configured.')); return () => {}; }
@@ -53,6 +54,20 @@ export async function persistCloudState(state: CloudState): Promise<void> {
   if (!firebaseEnabled || !firebaseAuth || !realtimeDatabase) return;
   if (!firebaseAuth.currentUser) return;
   await set(stateRef(), { ...withoutUndefined(state), updatedAt: Date.now() });
+  const user = firebaseAuth.currentUser;
+  if (Array.isArray(state.orders)) {
+    await Promise.all((state.orders as AppData['orders']).map(order => set(ref(realtimeDatabase!, `operations/orders/${order.id}`), withoutUndefined({ ...order, ownerUid: order.ownerUid || user.uid }))));
+  }
+}
+
+export async function subscribeToOperations(onOperations: (operations: Pick<AppData, 'orders' | 'vendors'>) => void, onError: CloudErrorHandler): Promise<Unsubscribe> {
+  if (!firebaseEnabled || !firebaseAuth || !realtimeDatabase) { onError(new Error('Firebase Realtime Database is not configured.')); return () => {}; }
+  const profile = await getUserProfile();
+  if (!profile || (profile.role !== 'admin' && profile.role !== 'vendor')) { return () => {}; }
+  return onValue(operationsRef(), snapshot => {
+    const value = snapshot.val() as { orders?: AppData['orders']; vendors?: Record<string, Vendor> } | null;
+    onOperations({ orders: Object.values(value?.orders || {}), vendors: Object.values(value?.vendors || {}) });
+  }, onError);
 }
 
 export async function createUserProfile(profile: Profile, role: Role): Promise<void> {
@@ -71,6 +86,9 @@ export async function createUserProfile(profile: Profile, role: Role): Promise<v
   };
   
   await set(userProfileRef, withoutUndefined(userProfileData));
+  if (role === 'vendor') {
+    await set(ref(realtimeDatabase, `operations/vendors/${user.uid}`), withoutUndefined({ uid: user.uid, name: profile.name, email: profile.email || user.email || '', phone: profile.phone, status: 'Online' }));
+  }
 }
 
 export async function getUserProfile(): Promise<UserProfile | null> {

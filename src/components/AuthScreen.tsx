@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { ArrowRight, Droplets, ShieldCheck } from 'lucide-react';
-import { registerWithPassword, signInWithGoogle, signInWithPassword } from '../auth';
+import { registerWithPassword, signInWithGoogle, signInWithPassword, signOutFirebaseUser } from '../auth';
+import { createUserProfile, getUserProfile } from '../cloudStore';
 import { useAppStore } from '../store';
 import { useContent } from '../hooks/useContent';
 import type { Role } from '../types';
@@ -12,7 +13,22 @@ export function AuthScreen() {
   const { authRole: role, authName: name, authEmail: email, authPassword: password, authPhone: phone, authBusy: busy, authError: error, authRememberMe: rememberMe, setAuthRole: setRole, setAuthName: setName, setAuthEmail: setEmail, setAuthPassword: setPassword, setAuthPhone: setPhone, setAuthBusy: setBusy, setAuthError: setError, setAuthRememberMe: setRememberMe, update } = useAppStore();
   const [registering, setRegistering] = useState(false);
   const validatePhone = () => { const normalized = phone.replace(/\D/g, ''); if (!/^[6-9]\d{9}$/.test(normalized)) { setError('Enter a valid 10-digit Indian mobile number.'); return null; } return normalized; };
-  const complete = (user: { displayName: string | null; email: string | null; phoneNumber: string | null }) => update({ role, profile: { name: user.displayName || name.trim() || email.split('@')[0] || 'Urban Tanker user', email: user.email || email, phone: user.phoneNumber || phone } });
+  const complete = async (user: { displayName: string | null; email: string | null; phoneNumber: string | null }) => {
+    const profile = await getUserProfile();
+    const rejectRole = async (message: string) => {
+      update({ profile: null });
+      await signOutFirebaseUser();
+      throw new Error(message);
+    };
+    if (registering) {
+      await createUserProfile({ name: user.displayName || name.trim() || email.split('@')[0] || 'Urban Tanker user', email: user.email || email, phone: user.phoneNumber || phone }, role);
+    } else if (profile?.role && profile.role !== role) {
+      await rejectRole(`This account is registered as ${profile.role}. Select that role to continue.`);
+    } else if (!profile && role !== 'customer') {
+      await rejectRole('This account has no vendor or admin role assigned. Register or ask an administrator to provision it first.');
+    }
+    update({ role: profile?.role || role, profile: { name: user.displayName || profile?.name || name.trim() || email.split('@')[0] || 'Urban Tanker user', email: user.email || profile?.email || email, phone: user.phoneNumber || profile?.phone || phone } });
+  };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
@@ -20,9 +36,9 @@ export function AuthScreen() {
     setBusy(true);
     try {
       if (registering) {
-        complete(await registerWithPassword(email.trim(), password, name.trim() || undefined));
+        await complete(await registerWithPassword(email.trim(), password, name.trim() || undefined));
       } else {
-        complete(await signInWithPassword(email.trim(), password));
+        await complete(await signInWithPassword(email.trim(), password));
       }
     }
     catch (cause) {
@@ -36,7 +52,7 @@ export function AuthScreen() {
     setError('');
     setBusy(true);
     try {
-      complete(await signInWithGoogle());
+      await complete(await signInWithGoogle());
     } catch (cause) {
       const code = cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : '';
       setError(code === 'auth/popup-closed-by-user' ? 'Google sign-in was cancelled.' : cause instanceof Error ? cause.message : 'Unable to sign in with Google.');
