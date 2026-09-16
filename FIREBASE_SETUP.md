@@ -1,6 +1,6 @@
 # Firebase Setup Guide for Urban Tanker Backend
 
-This backend now uses **Firebase Firestore** for data storage with **JWT authentication**.
+The frontend uses **Firebase Realtime Database** for tenant content, profiles, bookings, and role data.
 
 ## Prerequisites
 

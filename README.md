@@ -1,6 +1,6 @@
 # Urban Tanker Operations
 
-Modern React/Vite implementation of the Urban Tanker prototype with production-grade authentication using Firebase Firestore. It covers the customer booking and tracking workflow, vendor dispatch workflow, and admin operations dashboard in one responsive application.
+Modern React/Vite implementation of the Urban Tanker prototype with Firebase Authentication and Realtime Database. It covers the customer booking and tracking workflow, vendor dispatch workflow, and admin operations dashboard in one responsive application.
 
 ## ⚡ Quick Start (Firebase + Express Backend)
 
@@ -13,7 +13,7 @@ Modern React/Vite implementation of the Urban Tanker prototype with production-g
 1. **Create Firebase Project** (if you don't have one)
    - Go to https://console.firebase.google.com
    - Create new project
-   - Enable Firestore Database
+   - Enable Realtime Database
 
 2. **Get Firebase Credentials**
    - Settings → Service Accounts
