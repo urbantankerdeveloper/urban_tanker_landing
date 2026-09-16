@@ -40,6 +40,7 @@ export function CheckoutModal() {
     setCheckoutOpen,
   } = useAppStore();
   const coupons = useAppStore((state) => state.content.coupons) as CouponContent[];
+  const copy = useAppStore((state) => state.content.checkout);
   const paymentsApi = useApi("razorpay-payment");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -207,41 +208,41 @@ export function CheckoutModal() {
           <X size={18} />
         </button>
         <span className="eyebrow">
-          {step === "review" ? "Review booking" : "Payment"}
+          {step === "review" ? copy.reviewEyebrow : copy.paymentEyebrow}
         </span>
         <h2 id="checkout-title">
-          {step === "review" ? "Almost there." : "Choose how to pay."}
+          {step === "review" ? copy.reviewTitle : copy.paymentTitle}
         </h2>
         <p className="modal-copy">
           {step === "review"
-            ? "Review your service details and apply an eligible coupon."
-            : "Select a payment method to confirm your booking."}
+            ? copy.reviewDescription
+            : copy.paymentDescription}
         </p>
         {step === "review" && <div className="checkout-step checkout-step-review">
           <div className="checkout-summary">
             <div>
-              <span>Service</span>
+              <span>{copy.serviceLabel}</span>
               <b>{details.service}</b>
             </div>
             <div>
-              <span>Capacity</span>
+              <span>{copy.capacityLabel}</span>
               <b>{details.capacity}</b>
             </div>
             <div>
-              <span>Delivery</span>
+              <span>{copy.deliveryLabel}</span>
               <b>{details.address}</b>
             </div>
             {discount > 0 && (
               <div>
-                <span>Discount · {appliedCoupon?.code}</span>
+                <span>{copy.discountLabel} · {appliedCoupon?.code}</span>
                 <span className="discount-actions">
                   <strong className="discount-value">-{money(discount)}</strong>
                   <button
                     className="coupon-remove"
                     type="button"
                     onClick={removeCoupon}
-                    aria-label="Remove coupon"
-                    title="Remove coupon"
+                    aria-label={copy.removeCoupon}
+                    title={copy.removeCoupon}
                     disabled={busy}
                   >
                     <X size={13} />
@@ -250,12 +251,12 @@ export function CheckoutModal() {
               </div>
             )}
             <div className="summary-total">
-              <span>Total</span>
+              <span>{copy.totalLabel}</span>
               <strong>{money(amount)}</strong>
             </div>
           </div>
           <div className="coupon-entry">
-            <label htmlFor="checkout-coupon">Coupon code</label>
+            <label htmlFor="checkout-coupon">{copy.couponLabel}</label>
             <div>
               <Tag size={16} />
               <input
@@ -266,12 +267,12 @@ export function CheckoutModal() {
                   setAppliedCoupon(null);
                   setError("");
                 }}
-                placeholder="Enter coupon code"
+                placeholder={copy.couponPlaceholder}
                 disabled={busy}
               />
               {couponCode.trim() && !appliedCoupon && (
                 <button type="button" onClick={applyCoupon} disabled={busy}>
-                  Apply
+                  {copy.couponApply}
                 </button>
               )}
             </div>
@@ -290,8 +291,8 @@ export function CheckoutModal() {
                       aria-pressed={couponCode === coupon.code && !appliedCoupon}
                     >
                       {couponCode === coupon.code && !appliedCoupon
-                        ? "Selected"
-                        : "Select"}
+                        ? copy.couponSelected
+                        : copy.couponSelect}
                     </button>
                   </article>
                 );
@@ -299,8 +300,8 @@ export function CheckoutModal() {
             </div>
             <small>
               {appliedCoupon
-                ? `${appliedCoupon.code} applied. You save ${money(discount)}.`
-                : "Select an eligible offer or enter a coupon code."}
+                ? `${appliedCoupon.code} ${copy.couponApplied} ${money(discount)}.`
+                : copy.couponPrompt}
             </small>
           </div>
           <Button
@@ -308,21 +309,21 @@ export function CheckoutModal() {
             onClick={() => setStep("payment")}
             disabled={busy}
           >
-            Continue to payment <ArrowRight size={16} />
+            {copy.continuePayment} <ArrowRight size={16} />
           </Button>
         </div>}
         {step === "payment" && <div className="checkout-step checkout-step-payment">
-          <div className="payment-review-total"><span>Total to pay</span><strong>{money(amount)}</strong></div>
+          <div className="payment-review-total"><span>{copy.totalToPay}</span><strong>{money(amount)}</strong></div>
           <Button
             variant="quiet full"
             icon={ArrowLeft}
             onClick={() => setStep("review")}
             disabled={busy}
           >
-            Back to review
+            {copy.backToReview}
           </Button>
           <fieldset className="payment-options">
-            <legend>Payment method</legend>
+            <legend>{copy.payment}</legend>
             {["UPI", "Card", "Cash"].map((option) => (
               <button
                 type="button"
@@ -333,7 +334,7 @@ export function CheckoutModal() {
                 disabled={busy}
               >
                 <WalletCards size={16} />
-                <span>{option === "Cash" ? "Cash on delivery" : option}</span>
+                <span>{option === "Cash" ? copy.cashOnDelivery : option}</span>
                 {method === option && <Check size={15} />}
               </button>
             ))}
@@ -349,10 +350,10 @@ export function CheckoutModal() {
             disabled={busy}
           >
             {busy
-              ? "Processing..."
+              ? copy.processing
               : method === "Cash"
-                ? "Confirm booking"
-                : "Pay securely"}{" "}
+                ? copy.confirmBooking
+                : copy.pay}{" "}
             <ArrowRight size={16} />
           </Button>
           <small className="modal-note">

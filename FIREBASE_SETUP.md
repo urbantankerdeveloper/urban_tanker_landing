@@ -186,6 +186,22 @@ curl -X GET http://localhost:5000/api/auth/me \
 
 The backend uses the following Firestore collections:
 
+### Customer content and coupons
+
+Each customer or client has an isolated content document:
+
+```
+customers/{CUSTOMER_ID}/content/config
+```
+
+Set the frontend customer ID in `.env.local`:
+
+```env
+VITE_CONTENT_CLIENT_ID=urban-tanker
+```
+
+Store the coupon offers in the `coupons` array on that document. A second customer uses the same shape under its own ID, for example `customers/acme-water/content/config`.
+
 ### `users` Collection
 
 Document structure:
