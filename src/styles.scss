@@ -31,6 +31,20 @@
 	min-height: 42px;
 	padding: 6px 10px
 }
+.customer-site {
+	display: flex;
+	flex-direction: column;
+	min-height: 100vh
+}
+
+.customer-site>main {
+	flex: 1 0 auto;
+	width: 100%
+}
+
+.customer-site>.customer-footer {
+	margin-top: auto
+}
 .coupon-entry input {
 	min-width: 0;
 	flex: 1;
@@ -117,6 +131,23 @@
 }
 .discount-value {
 	color: var(--green)
+}
+.selected-role {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 9px 11px;
+	margin: 0 0 14px;
+	color: var(--muted);
+	background: #f4f8f5;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	font-size: 10px
+}
+
+.selected-role strong {
+	color: var(--aqua-dark);
+	font-size: 11px
 }
 .checkout-step {
 	animation: checkout-step-in .24s ease both

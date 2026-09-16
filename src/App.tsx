@@ -56,7 +56,11 @@ export function App() {
       const claims = await user.getIdTokenResult();
       const claimRole = claims.claims.role as Role | undefined;
       const userProfile = await getUserProfile();
-      useAppStore.setState({ data: { ...cachedData, profile: { name: user.displayName || userProfile?.name || cachedData.profile?.name || user.email?.split('@')[0] || 'Urban Tanker user', email: user.email || userProfile?.email || cachedData.profile?.email || '', phone: user.phoneNumber || userProfile?.phone || cachedData.profile?.phone || '' }, role: claimRole || userProfile?.role || cachedData.role }, bookingDraft: cachedData.booking });
+      if (!userProfile?.role) {
+        useAppStore.setState({ data: { ...cachedData, profile: null }, isHydrated: true });
+        return;
+      }
+      useAppStore.setState({ data: { ...cachedData, profile: { name: user.displayName || userProfile.name || cachedData.profile?.name || user.email?.split('@')[0] || 'Urban Tanker user', email: user.email || userProfile.email || cachedData.profile?.email || '', phone: user.phoneNumber || userProfile.phone || cachedData.profile?.phone || '' }, role: userProfile.role || claimRole }, bookingDraft: cachedData.booking });
       subscribeToCloudState(cloudState => hydrateCloudState(cloudState), () => notify('Firebase sync is unavailable. Continuing with cached data.'))
         .then(stop => { unsubscribeCloud = stop; })
         .catch(() => notify('Unable to sync Firebase data.'));

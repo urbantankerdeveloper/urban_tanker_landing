@@ -16,18 +16,20 @@ function withoutUndefined<T>(value: T): T {
 
 export interface UserProfile extends Profile {
   role: Role;
+  clientId: string;
   createdAt: number;
   updatedAt: number;
 }
 
+export const contentClientId = import.meta.env.VITE_CONTENT_CLIENT_ID || 'urban-tanker';
+
 const stateRef = () => {
   const user = firebaseAuth?.currentUser;
   if (!user) throw new Error('Authentication is required for cloud state.');
-  return ref(realtimeDatabase!, `users/${user.uid}/state/urban-tanker`);
+  return ref(realtimeDatabase!, `customers/${contentClientId}/users/${user.uid}/state`);
 };
-export const contentClientId = import.meta.env.VITE_CONTENT_CLIENT_ID || 'urban-tanker';
 const contentRef = (clientId: string) => ref(realtimeDatabase!, `customers/${clientId}/content/config`);
-const operationsRef = () => ref(realtimeDatabase!, 'operations');
+const operationsRef = () => ref(realtimeDatabase!, `customers/${contentClientId}/operations`);
 
 export async function subscribeToContent(clientId: string, onContent: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
   if (!firebaseEnabled || !realtimeDatabase) { onError(new Error('Firebase Realtime Database is not configured.')); return () => {}; }
@@ -56,7 +58,7 @@ export async function persistCloudState(state: CloudState): Promise<void> {
   await set(stateRef(), { ...withoutUndefined(state), updatedAt: Date.now() });
   const user = firebaseAuth.currentUser;
   if (Array.isArray(state.orders)) {
-    await Promise.all((state.orders as AppData['orders']).map(order => set(ref(realtimeDatabase!, `operations/orders/${order.id}`), withoutUndefined({ ...order, ownerUid: order.ownerUid || user.uid }))));
+    await Promise.all((state.orders as AppData['orders']).map(order => set(ref(realtimeDatabase!, `customers/${contentClientId}/operations/orders/${order.id}`), withoutUndefined({ ...order, ownerUid: order.ownerUid || user.uid }))));
   }
 }
 
@@ -75,19 +77,20 @@ export async function createUserProfile(profile: Profile, role: Role): Promise<v
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error('User must be authenticated to create a profile.');
   
-  const userProfileRef = ref(realtimeDatabase, `users/${user.uid}/profile`);
+  const userProfileRef = ref(realtimeDatabase, `customers/${contentClientId}/users/${user.uid}/profile`);
   const userProfileData: UserProfile = {
     name: profile.name,
     email: profile.email || user.email || '',
     phone: profile.phone,
     role,
+    clientId: contentClientId,
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
   
   await set(userProfileRef, withoutUndefined(userProfileData));
   if (role === 'vendor') {
-    await set(ref(realtimeDatabase, `operations/vendors/${user.uid}`), withoutUndefined({ uid: user.uid, name: profile.name, email: profile.email || user.email || '', phone: profile.phone, status: 'Online' }));
+    await set(ref(realtimeDatabase, `customers/${contentClientId}/operations/vendors/${user.uid}`), withoutUndefined({ uid: user.uid, name: profile.name, email: profile.email || user.email || '', phone: profile.phone, status: 'Online' }));
   }
 }
 
@@ -96,7 +99,7 @@ export async function getUserProfile(): Promise<UserProfile | null> {
   const user = firebaseAuth.currentUser;
   if (!user) return null;
   
-  const snapshot = await get(ref(realtimeDatabase, `users/${user.uid}/profile`));
+  const snapshot = await get(ref(realtimeDatabase, `customers/${contentClientId}/users/${user.uid}/profile`));
   return snapshot.exists() ? (snapshot.val() as UserProfile) : null;
 }
 
@@ -115,7 +118,7 @@ export function subscribeToUserProfile(
     return () => {};
   }
   
-  const userProfileRef = ref(realtimeDatabase, `users/${user.uid}/profile`);
+  const userProfileRef = ref(realtimeDatabase, `customers/${contentClientId}/users/${user.uid}/profile`);
   return onValue(userProfileRef, snapshot => {
     onProfile(snapshot.exists() ? (snapshot.val() as UserProfile) : null);
   }, onError);

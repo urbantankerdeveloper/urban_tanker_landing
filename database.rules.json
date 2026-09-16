@@ -5,38 +5,36 @@
         "content": {
           "$document": {
             ".read": true,
-            ".write": "auth != null && auth.token.role == 'admin'"
-          }
-        }
-      }
-    },
-    "operations": {
-      "orders": {
-        "$orderId": {
-          ".read": "auth != null && (root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin' || root.child('users').child(auth.uid).child('profile').child('role').val() == 'vendor')",
-          ".write": "auth != null && (root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin' || newData.child('ownerUid').val() == auth.uid || newData.child('vendor').val() == root.child('users').child(auth.uid).child('profile').child('name').val())",
-          ".validate": "newData.hasChildren(['id', 'ownerUid', 'service', 'status'])"
-        }
-      },
-      "vendors": {
-        "$vendorUid": {
-          ".read": "auth != null && root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin'",
-          ".write": "auth != null && (auth.uid == $vendorUid || root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin')"
-        }
-      }
-    },
-    "users": {
-      "$userId": {
-        "state": {
-          "$document": {
-            ".read": "auth != null && auth.uid == $userId",
-            ".write": "auth != null && auth.uid == $userId"
+            ".write": "auth != null && root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin'"
           }
         },
-        "profile": {
-          ".read": "auth != null && (auth.uid == $userId || root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin')",
-          ".write": "auth != null && (root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin' || (auth.uid == $userId && (!data.exists() || newData.child('role').val() == data.child('role').val())))",
-          ".validate": "newData.hasChildren(['name', 'role']) && (newData.child('role').val() == 'customer' || newData.child('role').val() == 'vendor' || newData.child('role').val() == 'admin') && ((data.exists() && newData.child('role').val() == data.child('role').val()) || (!data.exists() && newData.child('role').val() == 'customer') || (root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin'))"
+        "users": {
+          "$userId": {
+            "state": {
+              ".read": "auth != null && auth.uid == $userId",
+              ".write": "auth != null && auth.uid == $userId"
+            },
+            "profile": {
+              ".read": "auth != null && (auth.uid == $userId || root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin')",
+              ".write": "auth != null && (root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin' || (auth.uid == $userId && (!data.exists() || newData.child('role').val() == data.child('role').val())))",
+              ".validate": "newData.hasChildren(['name', 'role', 'clientId']) && newData.child('clientId').val() == $customerId && (newData.child('role').val() == 'customer' || newData.child('role').val() == 'vendor' || newData.child('role').val() == 'admin') && ((data.exists() && newData.child('role').val() == data.child('role').val()) || (!data.exists() && newData.child('role').val() == 'customer') || (root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin'))"
+            }
+          }
+        },
+        "operations": {
+          "orders": {
+            "$orderId": {
+              ".read": "auth != null && (root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin' || root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'vendor')",
+              ".write": "auth != null && (root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin' || newData.child('ownerUid').val() == auth.uid || newData.child('vendor').val() == root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('name').val())",
+              ".validate": "newData.hasChildren(['id', 'ownerUid', 'service', 'status'])"
+            }
+          },
+          "vendors": {
+            "$vendorUid": {
+              ".read": "auth != null && root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin'",
+              ".write": "auth != null && (auth.uid == $vendorUid || root.child('customers').child($customerId).child('users').child(auth.uid).child('profile').child('role').val() == 'admin')"
+            }
+          }
         }
       }
     }

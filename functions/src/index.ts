@@ -9,7 +9,8 @@
 
 import {getApps, initializeApp} from "firebase-admin/app";
 import {getAuth} from "firebase-admin/auth";
-import {createHmac, timingSafeEqual} from "node:crypto";
+import {getDatabase} from "firebase-admin/database";
+import {createHmac, randomBytes, scryptSync, timingSafeEqual} from "node:crypto";
 import type {Request} from "express";
 import {setGlobalOptions} from "firebase-functions";
 import {onRequest} from "firebase-functions/https";
@@ -30,6 +31,60 @@ import {onRequest} from "firebase-functions/https";
 setGlobalOptions({maxInstances: 10});
 
 if (!getApps().length) initializeApp();
+
+function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
+	return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+	const [salt, expectedHex] = stored.split(':');
+	if (!salt || !expectedHex) return false;
+	const expected = Buffer.from(expectedHex, 'hex');
+	const actual = scryptSync(password, salt, expected.length);
+	return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function databaseUserPath(clientId: string, uid: string): string {
+	return `customers/${clientId}/users/${uid}`;
+}
+
+export const signInWithDatabaseCredentials = onRequest(async (request, response) => {
+	setCorsHeaders(response);
+	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
+	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
+	try {
+		const body = request.body && typeof request.body === 'object' ? request.body as {action?: unknown; clientId?: unknown; email?: unknown; password?: unknown; displayName?: unknown; phone?: unknown; role?: unknown} : {};
+		const action = body.action === 'register' ? 'register' : 'login';
+		const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+		const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+		const password = typeof body.password === 'string' ? body.password : '';
+		if (!clientId || !email || password.length < 8) { response.status(400).json({message: 'Client ID, email, and a password of at least 8 characters are required.'}); return; }
+		const database = getDatabase();
+		const usersSnapshot = await database.ref(`customers/${clientId}/authUsers`).get();
+		const users = usersSnapshot.val() as Record<string, {email?: string; passwordHash?: string; role?: string; name?: string; phone?: string}> | null;
+		const existing = Object.entries(users || {}).find(([, user]) => user.email === email);
+		if (action === 'register') {
+			if (body.role !== 'customer') { response.status(403).json({message: 'Only customer accounts can self-register.'}); return; }
+			if (existing) { response.status(409).json({message: 'That email address is already registered.'}); return; }
+			const uid = database.ref(`customers/${clientId}/authUsers`).push().key!;
+			const name = typeof body.displayName === 'string' && body.displayName.trim() ? body.displayName.trim() : email.split('@')[0];
+			const phone = typeof body.phone === 'string' ? body.phone : '';
+			const user = {email, passwordHash: hashPassword(password), role: 'customer', name, phone, clientId, createdAt: Date.now()};
+			await database.ref(databaseUserPath(clientId, uid)).set({auth: user, profile: {name, email, phone, role: 'customer', clientId, createdAt: user.createdAt, updatedAt: user.createdAt}});
+			const customToken = await getAuth().createCustomToken(uid, {role: 'customer', clientId});
+			response.status(201).json({customToken, user: {uid, email, displayName: name, phoneNumber: phone, role: 'customer'}});
+			return;
+		}
+		if (!existing || !existing[1].passwordHash || !verifyPassword(password, existing[1].passwordHash)) { response.status(401).json({message: 'Invalid email or password.'}); return; }
+		const [uid, stored] = existing;
+		if (body.role !== stored.role || stored.role !== 'customer' && stored.role !== 'vendor' && stored.role !== 'admin') { response.status(403).json({message: `This account is registered as ${stored.role || 'unknown'}. Select the matching role.`}); return; }
+		const customToken = await getAuth().createCustomToken(uid, {role: stored.role, clientId});
+		response.status(200).json({customToken, user: {uid, email: stored.email, displayName: stored.name || stored.email?.split('@')[0], phoneNumber: stored.phone || null, role: stored.role}});
+	} catch (error) {
+		console.error('Database credential auth error:', error);
+		response.status(500).json({message: 'Unable to authenticate with the client database.'});
+	}
+});
 
 function setCorsHeaders(response: {set: (field: string, value: string) => unknown}): void {
 	response.set('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || '*');

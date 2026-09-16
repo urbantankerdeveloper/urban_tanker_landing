@@ -1,8 +1,9 @@
 // Database-backed Authentication System
 // Uses backend API for user management
 
-import { GoogleAuthProvider, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile, type User } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithCustomToken, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { firebaseAuth, firebaseEnabled } from './firebase';
+import { contentClientId } from './cloudStore';
 
 export interface LocalUser {
   uid: string;
@@ -33,6 +34,7 @@ const authStateCallbacks: ((user: LocalUser | null) => void)[] = [];
 const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
+const AUTH_FUNCTION_URL = import.meta.env.VITE_AUTH_FUNCTION_URL || 'https://us-central1-urban-tanker-landing.cloudfunctions.net/signInWithDatabaseCredentials';
 
 function createUserObject(data: AuthResponse['user'], token: string): LocalUser {
   return {
@@ -96,50 +98,26 @@ export async function signInWithGoogle(): Promise<LocalUser> {
   return createFirebaseUser(result.user);
 }
 
-export async function signInWithPassword(email: string, password: string): Promise<LocalUser> {
-  if (firebaseAuth) {
-    const result = await signInWithEmailAndPassword(firebaseAuth, email, password);
-    return createFirebaseUser(result.user);
-  }
-  const response = await makeAuthRequest('/login', { email, password });
-  
-  const user = createUserObject(response.user, response.idToken);
-  currentUser = user;
-  
-  // Store token and user info
-  localStorage.setItem(TOKEN_KEY, response.idToken);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-  
-  notifyAuthStateChange(user);
-  return user;
+export async function signInWithPassword(email: string, password: string, role: LocalUser['role']): Promise<LocalUser> {
+  return databaseCredentialAuth('login', email, password, undefined, role);
 }
 
 export async function registerWithPassword(
   email: string,
   password: string,
-  displayName?: string
+  displayName?: string,
+  role: LocalUser['role'] = 'customer'
 ): Promise<LocalUser> {
-  if (firebaseAuth) {
-    const result = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-    if (displayName) await updateProfile(result.user, { displayName });
-    return createFirebaseUser(result.user);
-  }
-  const response = await makeAuthRequest('/register', {
-    email,
-    password,
-    displayName: displayName || email.split('@')[0],
-    role: 'customer', // New registrations default to customer role
-  });
-  
-  const user = createUserObject(response.user, response.idToken);
-  currentUser = user;
-  
-  // Store token and user info
-  localStorage.setItem(TOKEN_KEY, response.idToken);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-  
-  notifyAuthStateChange(user);
-  return user;
+  return databaseCredentialAuth('register', email, password, displayName, role);
+}
+
+async function databaseCredentialAuth(action: 'login' | 'register', email: string, password: string, displayName?: string, role: LocalUser['role'] = 'customer'): Promise<LocalUser> {
+  if (!firebaseAuth) throw new Error('Firebase is not configured.');
+  const response = await fetch(AUTH_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action, clientId: contentClientId, email, password, displayName, role }) });
+  const payload = await response.json() as {customToken?: string; user?: {uid: string; email: string; displayName: string; phoneNumber: string | null; role: LocalUser['role']}; message?: string};
+  if (!response.ok || !payload.customToken || !payload.user) throw new Error(payload.message || 'Database authentication failed.');
+  const result = await signInWithCustomToken(firebaseAuth, payload.customToken);
+  return createFirebaseUser(result.user);
 }
 
 export async function signOutUser(): Promise<void> {
