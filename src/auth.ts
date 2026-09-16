@@ -1,7 +1,7 @@
 // Database-backed Authentication System
 // Uses backend API for user management
 
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { firebaseAuth, firebaseEnabled } from './firebase';
 
 export interface LocalUser {
@@ -153,6 +153,10 @@ export async function signOutUser(): Promise<void> {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   notifyAuthStateChange(null);
+}
+
+export async function signOutFirebaseUser(): Promise<void> {
+  if (firebaseAuth) await signOut(firebaseAuth);
 }
 
 export function onAuthStateChanged(callback: (user: LocalUser | null) => void): () => void {

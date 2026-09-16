@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { initialState } from './data/demo';
-import { signOutUser } from './auth';
+import { signOutFirebaseUser, signOutUser } from './auth';
 import { persistCloudState } from './cloudStore';
 import { saveEncryptedState } from './secureCache';
 import type { AppData, AppPatch, BookingDraft, LocationDetails, Order, Role, Workspace } from './types';
@@ -81,7 +81,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   completeBooking: order => { get().update({ orders: [order, ...get().data.orders], pendingBooking: undefined }); set({ checkoutOpen: false, active: 'track' }); get().notify('Booking confirmed. BlueDrop Tankers is on the way.'); },
   updateOrder: order => get().update({ orders: get().data.orders.map(item => item.id === order.id ? order : item) })
   ,setHydrated: isHydrated => set({ isHydrated }),
-  signOut: () => { signOutUser().catch(() => undefined); get().update({ profile: null }); set({ active: 'overview', checkoutOpen: false, mobileNav: false }); get().notify('You have signed out.'); }
+  signOut: () => { signOutUser().catch(() => undefined); signOutFirebaseUser().catch(() => undefined); get().update({ profile: null }); set({ active: 'overview', checkoutOpen: false, mobileNav: false }); get().notify('You have signed out.'); }
   ,requestLocation: () => new Promise(resolve => {
     if (!navigator.geolocation) {
       get().update({ location: { ...get().data.location, permission: 'unavailable' } });
