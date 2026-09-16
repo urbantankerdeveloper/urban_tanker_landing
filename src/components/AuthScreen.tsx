@@ -32,7 +32,16 @@ export function AuthScreen() {
     }
   };
   const google = async () => {
-    setError('Google Sign-In requires additional backend configuration. Please use email and password.');
+    setError('');
+    setBusy(true);
+    try {
+      complete(await signInWithGoogle());
+    } catch (cause) {
+      const code = cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : '';
+      setError(code === 'auth/popup-closed-by-user' ? 'Google sign-in was cancelled.' : cause instanceof Error ? cause.message : 'Unable to sign in with Google.');
+    } finally {
+      setBusy(false);
+    }
   };
   const toggleMode = () => { setRegistering(value => !value); setError(''); };
   return <main className="auth-page" aria-labelledby="auth-title">

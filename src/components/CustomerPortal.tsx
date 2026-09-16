@@ -1,10 +1,10 @@
-import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupee, MapPin, MessageSquare, Package, Phone, Plus, RefreshCcw, ShieldCheck, Truck } from 'lucide-react';
+import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupee, MapPin, MessageSquare, Package, Phone, Plus, RefreshCcw, ShieldCheck, Truck, X } from 'lucide-react';
 import { money } from '../data/demo';
 import type { AppData, BookingDraft, Order, Workspace } from '../types';
 import { useAppStore } from '../store';
 import { Button, PageHeader, StatCard, Status } from './ui';
 import { CustomerLanding } from './CustomerLanding';
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 
 const prices: Record<string, number> = { '3 KL': 800, '6 KL': 1250, '9 KL': 1750, '12 KL': 2400, '16 KL': 3100 };
 const sewagePrices: Record<string, number> = { '3 KL': 1800, '6 KL': 2300, '9 KL': 2900, '12 KL': 3600, '16 KL': 4400 };
@@ -21,7 +21,7 @@ export function CustomerPortal() {
   if (active === 'book') return <BookingForm booking={booking} set={set} onSubmit={submitBooking} />;
   if (active === 'orders') return <OrdersView orders={data.orders} />;
   if (active === 'track') return <TrackingView order={activeOrder} />;
-  if (active === 'support') return <SupportView onNotify={onNotify} />;
+  if (active === 'support') return <SupportView data={data} onNotify={onNotify} />;
   return <CustomerLanding order={activeOrder} data={data} onNavigate={onNavigate} />;
 }
 
@@ -43,4 +43,21 @@ function OrdersView({ orders }: { orders: Order[] }) {
   ];
   return <><PageHeader eyebrow="Booking history" title="Your orders, together." copy="Active, upcoming, and completed water and wastewater services." action={<Button variant="quiet" icon={CalendarDays}>All time</Button>} /><div className="filter-tabs" role="tablist" aria-label="Order filters">{tabs.map(tab => <button className={filter === tab.id ? 'active' : ''} role="tab" aria-selected={filter === tab.id} onClick={() => setFilter(tab.id)} key={tab.id}>{tab.label} <b>{tab.count}</b></button>)}</div><div className="order-list">{visibleOrders.length ? visibleOrders.map(order => <article className="order-row" key={order.id}><div className="order-service-icon"><Droplets size={19} /></div><div className="order-main"><div><b>{order.service}</b><Status>{order.status}</Status></div><span>{order.id} · {order.capacity} · {order.address}</span><small>{order.created}</small></div><div className="order-amount"><strong>{money(order.amount)}</strong><span>{order.payment}</span></div><ArrowRight size={17} /></article>) : <div className="empty-state"><h3>No orders in this filter</h3><p>New bookings will appear here when they match this status.</p></div>}</div></>;
 }
-function SupportView({ onNotify }: { onNotify: (message: string) => void }) { return <><PageHeader eyebrow="Customer support" title="How can we help?" copy="Our Chennai team is available for bookings, payments, tanker access, and account questions." /><div className="support-grid"><div className="support-card"><MessageSquare size={22} /><h3>Message support</h3><p>Describe the issue and include your order ID. We usually respond within 15 minutes.</p><Button variant="primary" icon={ArrowRight} onClick={() => onNotify('Support request drafted for support@urbantanker.com')}>Start a request</Button></div><div className="support-card"><Phone size={22} /><h3>Call dispatch</h3><p>For an active delivery, connect directly with our operations desk.</p><Button variant="quiet" icon={Phone} onClick={() => onNotify('Calling dispatch is available in production mode')}>+91 44 4012 2200</Button></div></div></>; }
+function SupportView({ data, onNotify }: { data: AppData; onNotify: (message: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const activeOrder = data.orders.find(order => order.status !== 'Delivered');
+  const [name, setName] = useState(data.profile?.name || '');
+  const [orderId, setOrderId] = useState(activeOrder?.id || '');
+  const [message, setMessage] = useState('');
+
+  const submitRequest = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const subject = `Urban Tanker support request${orderId ? ` · ${orderId}` : ''}`;
+    const body = `Name: ${name}\nOrder ID: ${orderId}\n\n${message}`;
+    window.location.href = `mailto:support@urbantanker.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    setOpen(false);
+    onNotify('Your support email draft is ready to send.');
+  };
+
+  return <><PageHeader eyebrow="Customer support" title="How can we help?" copy="Our Chennai team is available for bookings, payments, tanker access, and account questions." /><div className="support-grid"><div className="support-card"><MessageSquare size={22} /><h3>Message support</h3><p>Describe the issue and include your order ID. We usually respond within 15 minutes.</p><Button variant="primary" icon={ArrowRight} onClick={() => setOpen(true)}>Start a request</Button></div><div className="support-card"><Phone size={22} /><h3>Call dispatch</h3><p>For an active delivery, connect directly with our operations desk.</p><Button variant="quiet" icon={Phone} onClick={() => onNotify('Calling dispatch is available in production mode')}>+91 44 4012 2200</Button></div></div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal support-dialog" role="dialog" aria-modal="true" aria-labelledby="support-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close support request"><X size={18} /></button><span className="eyebrow">Customer support</span><h2 id="support-title">Send us a message.</h2><p className="modal-copy">We will open your email client with the request details ready to send.</p><form className="support-form" onSubmit={submitRequest}><label htmlFor="support-name">Name<input id="support-name" value={name} onChange={event => setName(event.target.value)} autoComplete="name" required /></label><label htmlFor="support-order">Order ID (optional)<input id="support-order" value={orderId} onChange={event => setOrderId(event.target.value)} placeholder="Order ID" /></label><label htmlFor="support-message">Message<textarea id="support-message" value={message} onChange={event => setMessage(event.target.value)} rows={5} placeholder="Tell us how we can help" required /></label><Button variant="primary full" type="submit">Submit request <ArrowRight size={16} /></Button></form></section></div>}</>;
+}

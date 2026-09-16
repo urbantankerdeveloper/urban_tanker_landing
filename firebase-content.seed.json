@@ -1,4 +1,10 @@
 {
+  "coupons": [
+    { "code": "ECRFIRST50", "label": "50% off your first water tanker booking", "discount": 50, "service": "Water tanker", "firstBooking": true },
+    { "code": "WATER200", "label": "₹200 off water tanker bookings", "discount": 200, "service": "Water tanker" },
+    { "code": "SEWAGE300", "label": "₹300 off sewage pickup", "discount": 300, "service": "Sewage pickup" },
+    { "code": "WEEKEND15", "label": "15% off weekend bookings", "discount": 15 }
+  ],
   "brand": {
     "name": "Urban Tanker",
     "tagline": "Water & wastewater services, simplified.",

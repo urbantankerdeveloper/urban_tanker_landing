@@ -1,0 +1,28 @@
+{
+  "rules": {
+    "customers": {
+      "$customerId": {
+        "content": {
+          "$document": {
+            ".read": true,
+            ".write": "auth != null && auth.token.role == 'admin'"
+          }
+        }
+      }
+    },
+    "users": {
+      "$userId": {
+        "state": {
+          "$document": {
+            ".read": "auth != null && auth.uid == $userId",
+            ".write": "auth != null && auth.uid == $userId"
+          }
+        },
+        "profile": {
+          ".read": "auth != null && auth.uid == $userId",
+          ".write": "auth != null && auth.uid == $userId"
+        }
+      }
+    }
+  }
+}

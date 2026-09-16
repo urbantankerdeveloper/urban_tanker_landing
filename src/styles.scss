@@ -27,6 +27,10 @@
 	background: var(--white)
 }
 
+.coupon-entry>div:not(.coupon-offers) {
+	min-height: 42px;
+	padding: 6px 10px
+}
 .coupon-entry input {
 	min-width: 0;
 	flex: 1;
@@ -53,10 +57,199 @@
 	font-size: 10px
 }
 
+.coupon-offers {
+	display: flex;
+	gap: 8px;
+	margin-top: 10px;
+	overflow-x: auto;
+	padding-bottom: 4px;
+	scroll-snap-type: x mandatory;
+	overscroll-behavior-inline: contain;
+	-webkit-overflow-scrolling: touch
+}
+
+.coupon-offer {
+	display: flex;
+	flex: 0 0 min(82%, 270px);
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 9px 10px;
+	background: var(--paper);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	scroll-snap-align: start
+}
+
+.coupon-offer>div {
+	display: grid;
+	gap: 2px;
+	min-width: 0
+}
+
+.coupon-offer strong {
+	color: var(--aqua-dark);
+	font: 700 10px 'DM Mono', monospace
+}
+
+.coupon-offer span {
+	overflow: hidden;
+	color: var(--muted);
+	font-size: 10px;
+	text-overflow: ellipsis;
+	white-space: nowrap
+}
+
+.coupon-offer button {
+	flex: 0 0 auto;
+	padding: 5px 9px;
+	color: var(--aqua-dark);
+	background: var(--mint);
+	border: 0;
+	border-radius: 6px;
+	font-size: 10px;
+	font-weight: 800
+}
+
+.coupon-offer button:disabled {
+	background: #edf2f0;
+	color: #9aa8a9
+}
 .discount-value {
 	color: var(--green)
 }
+.checkout-step {
+	animation: checkout-step-in .24s ease both
+}
 
+.checkout-step-payment {
+	display: grid;
+	gap: 14px
+}
+
+.payment-review-total {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 14px 0;
+	border-bottom: 1px solid var(--line);
+	color: var(--muted);
+	font-size: 12px
+}
+
+.payment-review-total strong {
+	color: var(--ink);
+	font-size: 24px
+}
+
+@keyframes checkout-step-in {
+	from {
+		opacity: 0;
+		transform: translateX(28px)
+	}
+
+	to {
+		opacity: 1;
+		transform: translateX(0)
+	}
+}
+
+.checkout-step-review {
+	animation-name: checkout-review-in
+}
+
+@keyframes checkout-review-in {
+	from {
+		opacity: 0;
+		transform: translateX(-28px)
+	}
+
+	to {
+		opacity: 1;
+		transform: translateX(0)
+	}
+}
+
+.discount-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px
+}
+
+.coupon-remove {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--coral);
+	background: #fff0ed;
+	border: 1px solid #f4c7c0;
+	border-radius: 50%
+}
+
+.coupon-remove:hover:not(:disabled) {
+	color: #fff;
+	background: var(--coral)
+}
+
+.support-dialog {
+	width: min(100%, 520px)
+}
+
+.modal-backdrop {
+	overflow-y: auto
+}
+
+.modal {
+	max-height: calc(100svh - 36px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable
+}
+
+.checkout-step {
+	min-width: 0
+}
+
+@media(max-width:760px) {
+	.modal {
+		max-height: calc(100svh - 24px);
+		padding: 24px 19px 28px
+	}
+}
+.support-form {
+	display: grid;
+	gap: 13px;
+	margin-top: 18px
+}
+
+.support-form label {
+	display: grid;
+	gap: 6px;
+	color: var(--ink);
+	font-size: 11px;
+	font-weight: 800
+}
+
+.support-form input,
+.support-form textarea {
+	width: 100%;
+	padding: 10px 11px;
+	color: var(--ink);
+	background: var(--white);
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	outline: 0;
+	font-size: 12px;
+	resize: vertical
+}
+
+.support-form input:focus,
+.support-form textarea:focus {
+	border-color: var(--aqua);
+	box-shadow: 0 0 0 3px rgba(11, 140, 150, .12)
+}
 // Shared accessibility and auth presentation.
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .loading-screen{display:grid;place-items:center;align-content:center;gap:18px;min-height:100vh;padding:24px;background:var(--paper);color:var(--ink)}

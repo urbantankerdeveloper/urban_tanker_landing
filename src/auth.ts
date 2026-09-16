@@ -1,6 +1,9 @@
 // Database-backed Authentication System
 // Uses backend API for user management
 
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { firebaseAuth, firebaseEnabled } from './firebase';
+
 export interface LocalUser {
   uid: string;
   displayName: string | null;
@@ -68,9 +71,27 @@ async function makeAuthRequest(endpoint: string, body: Record<string, unknown>) 
 }
 
 export async function signInWithGoogle(): Promise<LocalUser> {
-  // Note: Google Sign-In would require additional setup with backend
-  // For now, throw error and prompt user to use email/password
-  throw new Error('Google Sign-In requires additional backend configuration. Please use email and password.');
+  if (!firebaseEnabled || !firebaseAuth) {
+    throw new Error('Firebase is not configured for Google Sign-In. Check your local Firebase environment settings.');
+  }
+
+  const result = await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
+  const firebaseUser = result.user;
+  const token = await firebaseUser.getIdToken();
+  const tokenResult = await firebaseUser.getIdTokenResult();
+  const user = createUserObject({
+    uid: firebaseUser.uid,
+    email: firebaseUser.email || '',
+    displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Urban Tanker user',
+    phoneNumber: firebaseUser.phoneNumber,
+    role: (tokenResult.claims.role as LocalUser['role'] | undefined) || 'customer'
+  }, token);
+
+  currentUser = user;
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  notifyAuthStateChange(user);
+  return user;
 }
 
 export async function signInWithPassword(email: string, password: string): Promise<LocalUser> {

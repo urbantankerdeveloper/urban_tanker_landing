@@ -1,4 +1,13 @@
+export interface CouponContent {
+  code: string;
+  label: string;
+  discount: number;
+  service?: string;
+  firstBooking?: boolean;
+}
+
 export interface AppContent {
+  coupons: CouponContent[];
   brand: { name: string; tagline: string; city: string };
   customer: {
     nav: { offers: string; track: string; support: string; home: string; book: string; orders: string };
@@ -20,6 +29,7 @@ export interface AppContent {
 }
 
 export const defaultContent: AppContent = {
+  coupons: [],
   brand: { name: 'Urban Tanker', tagline: 'Water & wastewater services, simplified.', city: 'Chennai operations' },
   customer: {
     nav: { offers: 'Offers', track: 'Track order', support: 'Help & support', home: 'Home', book: 'Book', orders: 'Orders' },

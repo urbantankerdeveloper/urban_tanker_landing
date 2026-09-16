@@ -1,5 +1,8 @@
 node_modules
 dist
+dist/
 implmemt 
 .env.local
 .env.*.local
+.firebase
+dist/index.html
