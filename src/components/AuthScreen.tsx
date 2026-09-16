@@ -13,12 +13,27 @@ export function AuthScreen() {
   const validatePhone = () => { const normalized = phone.replace(/\D/g, ''); if (!/^[6-9]\d{9}$/.test(normalized)) { setError('Enter a valid 10-digit Indian mobile number.'); return null; } return normalized; };
   const complete = (user: { displayName: string | null; email: string | null; phoneNumber: string | null }) => update({ role, profile: { name: user.displayName || name.trim() || email.split('@')[0] || 'Urban Tanker user', email: user.email || email, phone: user.phoneNumber || phone } });
   const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError(''); if (registering && !validatePhone()) return; setBusy(true);
-    try { complete(await (registering ? registerWithPassword(email.trim(), password, rememberMe) : signInWithPassword(email.trim(), password, rememberMe))); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : `Unable to ${registering ? 'register' : 'sign in'}. Check your details.`); }
-    finally { setBusy(false); }
+    event.preventDefault();
+    setError('');
+    if (registering && !validatePhone()) return;
+    setBusy(true);
+    try {
+      if (registering) {
+        complete(await registerWithPassword(email.trim(), password, name.trim() || undefined));
+      } else {
+        complete(await signInWithPassword(email.trim(), password));
+      }
+    }
+    catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Unable to ${registering ? 'register' : 'sign in'}. Check your details.`);
+    }
+    finally {
+      setBusy(false);
+    }
   };
-  const google = async () => { setError(''); if (registering && !validatePhone()) return; setBusy(true); try { complete(await signInWithGoogle(rememberMe)); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Google sign-in was cancelled or failed.'); } finally { setBusy(false); } };
+  const google = async () => {
+    setError('Google Sign-In requires additional backend configuration. Please use email and password.');
+  };
   const toggleMode = () => { setRegistering(value => !value); setError(''); };
   return <main className="auth-page" aria-labelledby="auth-title">
     <section className="auth-story" aria-label="Urban Tanker service promise"><div className="brand auth-brand"><span className="brand-mark"><Droplets size={18} /></span><span>urban<span>tanker</span></span></div><div className="auth-story-copy"><span className="eyebrow">Your delivery, remembered</span><h1>Reliable service starts with a <em>single profile.</em></h1><p>Keep your addresses, bookings and delivery updates together, so every tanker arrives with less effort.</p><div className="auth-proof"><span>01</span><b>Verified vendors</b><span>02</span><b>Clear pricing</b><span>03</span><b>Secure handover</b></div></div></section>

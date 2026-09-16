@@ -1,130 +1,319 @@
 # Urban Tanker Operations
 
-Modern React/Vite implementation of the Urban Tanker prototype. It covers the customer booking and tracking workflow, vendor dispatch workflow, and admin operations dashboard in one responsive application.
+Modern React/Vite implementation of the Urban Tanker prototype with production-grade authentication using Firebase Firestore. It covers the customer booking and tracking workflow, vendor dispatch workflow, and admin operations dashboard in one responsive application.
 
-## Component structure
+## ⚡ Quick Start (Firebase + Express Backend)
 
-- `src/main.tsx` owns application state and role-level routing.
-- `src/components/AppShell.tsx` owns the shared top bar, navigation, and workspace chrome.
-- `src/components/ui.tsx` contains reusable headers, buttons, status pills, and stat cards.
-- `src/components/Toast.tsx` owns transient feedback announcements.
-- `src/components/AuthScreen.tsx` owns the accessible customer, vendor, and admin entry screen.
-- `src/components/CustomerPortal.tsx` owns booking, quotes, tracking, orders, and support.
-- `src/components/VendorPortal.tsx` owns dispatch, location sharing, and delivery completion.
-- `src/components/AdminDashboard.tsx` owns operations KPIs, insights, and booking control.
-- `src/components/CheckoutModal.tsx` owns the accessible payment confirmation dialog.
-- `src/hooks/useApi.ts` owns typed `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` requests with Zustand-backed loading, data, and error state.
-- `src/firebase.ts` and `src/cloudStore.ts` own Firebase initialization and Firestore synchronization.
-- `src/styles.scss` contains the responsive visual system shared by all roles.
+### Prerequisites
+- **Node.js** 18+
+- **Firebase Project** (free at https://console.firebase.google.com)
 
-## Run locally
+### Setup (5 minutes)
 
-```sh
-npm install
+1. **Create Firebase Project** (if you don't have one)
+   - Go to https://console.firebase.google.com
+   - Create new project
+   - Enable Firestore Database
+
+2. **Get Firebase Credentials**
+   - Settings → Service Accounts
+   - Click "Generate New Private Key"
+   - Save the JSON file
+
+3. **Setup Backend**
+   ```bash
+   cd backend
+   npm install
+   cp .env.example .env.local
+   # Edit .env.local with Firebase credentials (see FIREBASE_SETUP.md)
+   npm run db:init
+   npm run dev
+   ```
+
+4. **Setup Frontend** (new terminal)
+   ```bash
+   npm install
+   cp .env.example .env.local
+   npm run dev
+   ```
+
+5. **Open App**
+   - Visit `http://localhost:5173`
+   - Register and login!
+
+## 📚 Documentation
+
+- **[FIREBASE_SETUP.md](./FIREBASE_SETUP.md)** - Complete Firebase setup guide
+- **[MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)** - Migration from PostgreSQL
+- **[backend/README.md](./backend/README.md)** - Backend API documentation
+
+## Architecture
+
+### Authentication System
+
+This app uses a **hybrid approach**:
+- ✅ **Firebase Firestore** - Stores user data and application data
+- ✅ **Express.js Backend** - RESTful API with JWT authentication
+- ✅ **JWT Tokens** - Stateless authentication (7 day expiration)
+- ✅ **Email/Password Login** - Standard web authentication flow
+- ✅ **Role-Based Access** - Customer, Vendor, and Admin roles
+
+```
+User Registration → Bcrypt Hash → Firestore Storage
+         ↓
+    Login → Verify Password → Generate JWT
+         ↓
+Frontend Stores Token → Auto-Included in API Calls
+         ↓
+Backend Validates Token → Returns User Data
+```
+
+### Component Structure
+
+- `src/main.tsx` - Application state and role-level routing
+- `src/auth.ts` - Authentication functions (register, login, logout)
+- `src/contexts/AuthContext.tsx` - Auth state management and provider
+- `src/components/AppShell.tsx` - Shared top bar, navigation, and chrome
+- `src/components/AuthScreen.tsx` - Login and registration UI
+- `src/components/CustomerPortal.tsx` - Booking, tracking, and orders
+- `src/components/VendorPortal.tsx` - Dispatch and delivery
+- `src/components/AdminDashboard.tsx` - Operations and KPIs
+- `src/hooks/useApi.ts` - Typed HTTP client with Zustand state
+- `src/styles.scss` - Responsive design system
+
+## Run Locally
+
+```bash
+# Development with auto-reload
 npm run dev
-```
 
-`npm run dev` opens the default Urban Tanker customer home page. Use the role-specific development commands when reviewing a portal:
+# Type checking
+npm run typecheck
 
-```sh
-npm run dev:customer
-npm run dev:vendor
-npm run dev:admin
-```
-
-Run `npm run typecheck` to validate the TypeScript source without emitting files.
-Run `npm run lint` to validate React hooks, TypeScript, and component export conventions.
-
-## HTTP requests
-
-Use the API hook from any component or feature hook:
-
-```tsx
-const ordersApi = useApi<Order[]>('orders');
-const orders = await ordersApi.get('/orders', { query: { status: 'active' } });
-await ordersApi.post('/orders', { service: 'Water tanker', capacity: '6 KL' });
-```
-
-Set `VITE_API_BASE_URL` for an external API. Without it, requests use the same-origin `/api` path. Requests automatically serialize JSON bodies, preserve `FormData`, expose loading and errors through Zustand, and cancel the previous request for the same hook instance.
-
-For production server mode, build the app and serve the generated bundle:
-
-```sh
+# Production build
 npm run build
 npm start
 ```
 
-The development server runs on `http://localhost:5173`. Production preview runs on `http://localhost:4173`. Both bind to `0.0.0.0` so they can be opened from another device on the same network.
+The app runs on `http://localhost:5173` (development) and binds to `0.0.0.0` for network access.
 
-Use the workspace switcher in the left navigation to move between Customer, Vendor, and Admin views. Demo state is persisted in browser local storage so a booking created in Customer view is immediately available to Vendor and Admin.
+## HTTP Requests
 
-## Firebase setup
+All API requests automatically include the JWT token:
 
-1. Create or select the Firebase project used by the app and register a Firebase Web App.
-2. Enable Email/Password and Google providers under Firebase Authentication.
-3. Create a Firestore database and deploy the included rules with `firebase deploy --only firestore:rules`.
-4. Copy `.env.example` to `.env.local` and fill in the Web App configuration values, including `VITE_FIREBASE_MEASUREMENT_ID` when Analytics is enabled.
-5. Set `VITE_CONTENT_CLIENT_ID` to the client document ID, for example `acme-water`.
-6. Run `npm install`, then `npm run dev` or `npm run build`.
-
-When Firebase variables are present, the app authenticates with Google or email/password and synchronizes each user's state under `users/{uid}/state/urban-tanker`. UI content is read from `content/{VITE_CONTENT_CLIENT_ID}` before login, updated live with `onSnapshot`, and encrypted in local storage under a client-specific cache key for startup/offline fallback. Without Firebase variables, the app stays usable with the built-in defaults and local state. The current state document is still a prototype store; production orders, payments, OTP validation, vendor assignment, and status transitions must be handled by authenticated server APIs.
-
-Static UI content is stored in the public-read Firestore document `content/{clientId}`. Copy the complete structure from `firebase-content.seed.json` into each client document and update the additional `operations` and `customer.form` fields when customizing navigation or booking options. The app hydrates it into Zustand through `useContent`, while `src/content.ts` supplies defaults for missing fields. Only users with the Firebase custom claim `role: "admin"` can update content documents.
-
-For example, create these separate documents for separate clients:
-
-```text
-content/acme-water
-content/chennai-municipal
-content/demo
+```tsx
+const ordersApi = useApi<Order[]>('orders');
+const orders = await ordersApi.get('/orders');
+await ordersApi.post('/orders', { service: 'Water tanker' });
 ```
 
-Each deployed client sets its own `VITE_CONTENT_CLIENT_ID`; no frontend rebuild is needed when that client’s text is edited in Firestore, because active sessions receive updates in real time.
+The token is retrieved from localStorage and included as `Authorization: Bearer <token>`.
 
-### Updating Firebase sign-in details
+## API Integration
 
-The `updateUserSignIn` HTTPS function accepts an authenticated `POST` request. The frontend API helper automatically adds the current Firebase ID token as a bearer token.
+### Authentication Endpoints
 
-```ts
-const accountApi = useApi('account');
-await accountApi.post('/updateUserSignIn', {
-	email: 'new-address@example.com',
-	password: 'a-new-password-123'
-});
+```bash
+# Register
+POST /api/auth/register
+{ email, password, displayName, phoneNumber, role }
+
+# Login
+POST /api/auth/login
+{ email, password }
+
+# Get Profile
+GET /api/auth/me
+(requires token)
+
+# Update Profile
+PUT /api/auth/me
+{ displayName?, phoneNumber? }
+
+# Change Password
+POST /api/auth/change-password
+{ currentPassword, newPassword }
+
+# Logout
+POST /api/auth/logout
 ```
 
-Set `VITE_API_BASE_URL` to the deployed Functions base URL. Do not hash passwords in the browser or store them in Firestore. The request is protected by HTTPS, and Firebase Authentication hashes and stores the password internally. The function accepts a minimum of eight characters and allows a user to update their own account; an authenticated user with the `admin` custom claim may include another user's `uid`.
+See [backend/README.md](./backend/README.md) for complete API reference.
 
-### Razorpay payments
+## Backend API
 
-Razorpay uses two authenticated HTTPS functions: `createRazorpayOrder` and `verifyRazorpayPayment`. The browser never receives the Razorpay secret. Before deploying Functions, create `functions/.env` from `functions/.env.example` and set the server-only values:
+The backend runs on `http://localhost:5000` and provides:
+
+- User authentication (register, login, profile management)
+- Role-based access control (customer, vendor, admin)
+- Secure password storage (bcryptjs with 10 salt rounds)
+- JWT token management (7 day expiration)
+- Firebase Firestore integration
+- Request validation and error handling
+
+See [backend/README.md](./backend/README.md) for full backend documentation.
+
+## Environment Configuration
+
+### Frontend (.env.local)
 
 ```env
-RAZORPAY_KEY_ID=rzp_test_your_key_id
-RAZORPAY_KEY_SECRET=your_server_only_secret
-ALLOWED_ORIGIN=https://urban-tanker-landing.web.app
+# Backend API URL
+VITE_API_BASE_URL=http://localhost:5000
+
+# Content configuration
+VITE_CONTENT_CLIENT_ID=urban-tanker
 ```
 
-Deploy the payment functions with:
+### Backend (backend/.env.local)
 
-```sh
-firebase deploy --only functions:createRazorpayOrder,functions:verifyRazorpayPayment
+```env
+# Firebase Credentials (from service account JSON)
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
+
+# JWT
+JWT_SECRET=your-secret-key
+JWT_EXPIRE=7d
+
+# Server
+PORT=5000
+NODE_ENV=development
+CORS_ORIGIN=http://localhost:5173
 ```
 
-The frontend creates the Razorpay order server-side, opens Razorpay Checkout, and marks the booking as paid only after the server verifies the Razorpay HMAC signature. Cash-on-delivery remains available without Razorpay.
+See [FIREBASE_SETUP.md](./FIREBASE_SETUP.md) for detailed setup instructions.
 
-Firebase data lifecycle:
+## Project Structure
 
-- The application shows an accessible loading skeleton until the first Firestore snapshot is received.
-- A temporary AES-GCM encrypted cache is stored in localStorage with a five-minute TTL.
-- The application decrypts and uses the cache only as a temporary startup fallback while Firebase is reconnecting.
-- An expired cache triggers a Firestore refresh and the refreshed state replaces the encrypted cache.
-- The encryption key is kept in sessionStorage, so the cache cannot be decrypted outside the current browser session. This protects cached content at rest from casual inspection, but it is not a substitute for server-side authorization or encryption.
+```
+urban_tanker_landing/
+├── backend/                    # Node.js + Express API
+│   ├── src/
+│   │   ├── server.js          # Express app
+│   │   ├── database/          # Firebase setup
+│   │   ├── routes/            # API endpoints
+│   │   ├── middleware/        # Auth middleware
+│   │   └── utils/             # Helpers
+│   └── package.json
+│
+├── src/                        # React frontend
+│   ├── auth.ts                # Authentication
+│   ├── components/            # UI components
+│   ├── hooks/                 # Custom hooks
+│   ├── types.ts               # TypeScript types
+│   └── styles.scss            # Styling
+│
+├── FIREBASE_SETUP.md          # Firebase setup guide
+├── MIGRATION_GUIDE.md         # PostgreSQL → Firestore migration
+└── package.json
+```
 
-## Firebase Hosting
+## Features
 
-Build with `npm run build`, then run `firebase init hosting` once for the Firebase project and deploy with `firebase deploy --only hosting`. The included `firebase.json` serves `dist` and rewrites application routes to `index.html`.
+### Customer Portal
+- Browse available services
+- Create bookings with details
+- Track order status in real-time
+- View order history
+- Support and communications
 
-## Production handoff
+### Vendor Portal
+- Accept/decline orders
+- Manage dispatch schedule
+- Real-time delivery tracking
+- Order completion and notes
+- Performance analytics
 
-This is a frontend workflow prototype. Replace the local-storage store with authenticated server APIs before deployment. Payment verification, OTP validation, role permissions, vendor links, live location, and order status transitions must be enforced server-side. See the reference handoff in the archived application for the required route and security checklist.
+### Admin Dashboard
+- Operations KPIs and metrics
+- Booking management and control
+- User and vendor management
+- System configuration
+- Reports and analytics
+
+## Security Features
+
+- **Password Hashing**: bcryptjs with 10 salt rounds
+- **JWT Tokens**: Stateless authentication with signature verification
+- **Firestore Security**: Rules-based access control
+- **CORS Protection**: Configurable allowed origins
+- **Input Validation**: Email, password, and phone validation
+- **Rate Limiting**: Configurable per endpoint
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Type checking
+npm run typecheck
+
+# Linting
+npm run lint
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+```
+
+## Troubleshooting
+
+### Backend won't start
+- Ensure Firebase credentials are correct
+- Check FIREBASE_PROJECT_ID matches your Firebase project
+- Run `npm run db:init` to test connection
+
+### Frontend can't reach backend
+- Ensure backend is running on port 5000
+- Check VITE_API_BASE_URL in `.env.local`
+- Check browser console for CORS errors
+
+### Firebase connection fails
+- Verify FIREBASE_PRIVATE_KEY has correct format with `\n`
+- Check FIREBASE_CLIENT_EMAIL matches service account
+- Ensure Firestore Database is enabled in Firebase Console
+
+For detailed troubleshooting, see [FIREBASE_SETUP.md](./FIREBASE_SETUP.md).
+
+## Production Deployment
+
+### Backend Deployment (Heroku, Railway, AWS, etc.)
+
+1. Generate strong JWT_SECRET:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+2. Set environment variables in your hosting platform:
+   - FIREBASE_PROJECT_ID
+   - FIREBASE_PRIVATE_KEY
+   - FIREBASE_CLIENT_EMAIL
+   - JWT_SECRET
+   - CORS_ORIGIN (your frontend URL)
+
+3. Deploy code
+4. Test health endpoint
+
+### Frontend Deployment (Vercel, Netlify, etc.)
+
+1. Set `VITE_API_BASE_URL` to your backend URL (e.g., `https://your-api.herokuapp.com`)
+2. Deploy frontend
+3. Test login/registration
+
+See [FIREBASE_SETUP.md](./FIREBASE_SETUP.md) for detailed deployment instructions.
+
+## License
+
+See [LICENSE](./LICENSE)
+
+---
+
+**Next**: Read [FIREBASE_SETUP.md](./FIREBASE_SETUP.md) for complete Firebase setup instructions

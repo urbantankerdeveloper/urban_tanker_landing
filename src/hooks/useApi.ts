@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { create } from 'zustand';
-import { firebaseAuth } from '../firebase';
+import { getAuthToken } from '../auth';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type RequestBody = BodyInit | Record<string, unknown> | null | undefined;
@@ -67,7 +67,7 @@ async function parseResponse(response: Response): Promise<unknown> {
 async function request<T>(path: string, options: ApiRequestOptions = {}, signal?: AbortSignal): Promise<T> {
   const body = serializeBody(options.body);
   const headers = new Headers(options.headers);
-  const token = await firebaseAuth?.currentUser?.getIdToken();
+  const token = getAuthToken();
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
   if (body && !(body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   const response = await fetch(buildUrl(path, options.query), { ...options, method: options.method || 'GET', body, headers, signal });
