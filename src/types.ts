@@ -41,6 +41,8 @@ export interface Order {
   eta: string;
   payment: string;
   created: string;
+  couponCode?: string;
+  discount?: number;
 }
 
 export interface Vendor {
