@@ -1,18 +1,23 @@
-import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupee, MapPin, MessageSquare, Navigation, Package, Phone, Plus, RefreshCcw, ShieldCheck, Truck } from 'lucide-react';
+import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupee, MapPin, MessageSquare, Package, Phone, Plus, RefreshCcw, ShieldCheck, Truck } from 'lucide-react';
 import { money } from '../data/demo';
 import type { AppData, BookingDraft, Order, Workspace } from '../types';
 import { useAppStore } from '../store';
 import { Button, PageHeader, StatCard, Status } from './ui';
 import { CustomerLanding } from './CustomerLanding';
-import { useContent } from '../hooks/useContent';
 import { useState } from 'react';
 
 const prices: Record<string, number> = { '3 KL': 800, '6 KL': 1250, '9 KL': 1750, '12 KL': 2400, '16 KL': 3100 };
+const sewagePrices: Record<string, number> = { '3 KL': 1800, '6 KL': 2300, '9 KL': 2900, '12 KL': 3600, '16 KL': 4400 };
 
 export function CustomerPortal() {
   const { data, active, setActive: onNavigate, notify: onNotify, bookingDraft: booking, setBookingDraft: set, setCheckoutOpen, update } = useAppStore();
   const activeOrder = data.orders.find(order => order.status !== 'Delivered');
-  const submitBooking = () => { update({ booking, pendingBooking: { ...booking, amount: booking.service === 'Sewage pickup' ? 2300 : 1250 } }); setCheckoutOpen(true); };
+  const submitBooking = () => {
+    const priceList = booking.service === 'Sewage pickup' ? sewagePrices : prices;
+    const amount = priceList[booking.capacity] ?? 0;
+    update({ booking, pendingBooking: { ...booking, amount } });
+    setCheckoutOpen(true);
+  };
   if (active === 'book') return <BookingForm booking={booking} set={set} onSubmit={submitBooking} />;
   if (active === 'orders') return <OrdersView orders={data.orders} />;
   if (active === 'track') return <TrackingView order={activeOrder} />;
