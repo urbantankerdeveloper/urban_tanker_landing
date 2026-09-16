@@ -33,6 +33,10 @@ export function AuthScreen() {
     event.preventDefault();
     setError('');
     if (registering && !validatePhone()) return;
+    if (registering && role !== 'customer') {
+      setError('Only customer accounts can self-register. Vendor and admin accounts must be provisioned by an administrator.');
+      return;
+    }
     setBusy(true);
     try {
       if (registering) {

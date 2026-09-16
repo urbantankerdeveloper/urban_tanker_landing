@@ -34,9 +34,9 @@
           }
         },
         "profile": {
-          ".read": "auth != null && auth.uid == $userId",
-          ".write": "auth != null && auth.uid == $userId",
-          ".validate": "newData.hasChildren(['name', 'role']) && (newData.child('role').val() == 'customer' || newData.child('role').val() == 'vendor' || newData.child('role').val() == 'admin') && (!data.exists() || newData.child('role').val() == data.child('role').val())"
+          ".read": "auth != null && (auth.uid == $userId || root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin')",
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin' || (auth.uid == $userId && (!data.exists() || newData.child('role').val() == data.child('role').val())))",
+          ".validate": "newData.hasChildren(['name', 'role']) && (newData.child('role').val() == 'customer' || newData.child('role').val() == 'vendor' || newData.child('role').val() == 'admin') && ((data.exists() && newData.child('role').val() == data.child('role').val()) || (!data.exists() && newData.child('role').val() == 'customer') || (root.child('users').child(auth.uid).child('profile').child('role').val() == 'admin'))"
         }
       }
     }
