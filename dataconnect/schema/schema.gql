@@ -1,0 +1,38 @@
+type User @table {
+  email: String!
+  username: String!
+  profilePictureUrl: String
+  bio: String
+}
+
+type YardSale @table {
+  title: String!
+  host: User!
+  address: String!
+  startTime: Timestamp!
+  endTime: Timestamp!
+  description: String
+  imageUrl: String
+}
+
+type Item @table {
+  title: String!
+  price: Float!
+  yardSale: YardSale!
+  description: String
+  imageUrl: String
+  isSold: Boolean
+}
+
+type Follow @table {
+  user: User!
+  yardSale: YardSale!
+}
+
+type Message @table {
+  sender: User!
+  receiver: User!
+  content: String!
+  timestamp: Timestamp!
+  item: Item
+}

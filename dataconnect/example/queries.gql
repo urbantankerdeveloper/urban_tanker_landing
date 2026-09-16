@@ -1,0 +1,79 @@
+mutation InsertUser($username: String!, $email: String!, $bio: String, $profilePictureUrl: String) @auth(level: USER) {
+  user_insert(data: { id_expr: "auth.uid", username: $username, email: $email, bio: $bio, profilePictureUrl: $profilePictureUrl })
+}
+
+mutation UpdateUser($username: String, $bio: String) @auth(level: USER) {
+  user_update(key: { id_expr: "auth.uid" }, data: { username: $username, bio: $bio })
+}
+
+mutation DeleteUser @auth(level: USER) {
+  user_delete(key: { id_expr: "auth.uid" })
+}
+
+query GetUser @auth(level: USER) {
+  user(key: { id_expr: "auth.uid" }) { username email bio profilePictureUrl }
+}
+
+query ListUsers @auth(level: PUBLIC, insecureReason: "Public list of users for community discovery.") {
+  users { username profilePictureUrl }
+}
+
+mutation CreateYardSale($title: String!, $address: String!, $startTime: Timestamp!, $endTime: Timestamp!, $description: String, $imageUrl: String) @auth(level: USER) {
+  yardSale_insert(data: { title: $title, address: $address, startTime: $startTime, endTime: $endTime, description: $description, imageUrl: $imageUrl, hostId_expr: "auth.uid" })
+}
+
+mutation UpdateYardSale($id: UUID!, $title: String) @auth(level: USER) {
+  yardSale_update(key: { id: $id }, data: { title: $title })
+}
+
+mutation DeleteYardSale($id: UUID!) @auth(level: USER) {
+  yardSale_delete(key: { id: $id })
+}
+
+query GetYardSale($id: UUID!) @auth(level: PUBLIC, insecureReason: "Yard sale details are public to attract visitors.") {
+  yardSale(id: $id) { title address startTime endTime description imageUrl }
+}
+
+query ListYardSales @auth(level: PUBLIC, insecureReason: "Listing all public yard sales.") {
+  yardSales { title address startTime endTime }
+}
+
+mutation CreateItem($yardSaleId: UUID!, $title: String!, $price: Float!, $description: String, $imageUrl: String) @auth(level: USER) {
+  item_insert(data: { yardSaleId: $yardSaleId, title: $title, price: $price, description: $description, imageUrl: $imageUrl })
+}
+
+mutation UpdateItem($id: UUID!, $isSold: Boolean) @auth(level: USER) {
+  item_update(key: { id: $id }, data: { isSold: $isSold })
+}
+
+mutation DeleteItem($id: UUID!) @auth(level: USER) {
+  item_delete(key: { id: $id })
+}
+
+query GetItem($id: UUID!) @auth(level: PUBLIC, insecureReason: "Item details are public.") {
+  item(id: $id) { title price description imageUrl isSold }
+}
+
+query ListItems($yardSaleId: UUID!) @auth(level: PUBLIC, insecureReason: "List items for a yard sale.") {
+  items(where: { yardSaleId: { eq: $yardSaleId } }) { title price isSold }
+}
+
+mutation CreateFollow($yardSaleId: UUID!) @auth(level: USER) {
+  follow_insert(data: { userId_expr: "auth.uid", yardSaleId: $yardSaleId })
+}
+
+mutation DeleteFollow($yardSaleId: UUID!) @auth(level: USER) {
+  follow_delete(first: { where: { userId: { eq_expr: "auth.uid" }, yardSaleId: { eq: $yardSaleId } } })
+}
+
+query ListFollows @auth(level: USER) {
+  follows(where: { userId: { eq_expr: "auth.uid" } }) { yardSale { title } }
+}
+
+mutation SendMessage($receiverId: UUID!, $content: String!, $itemId: UUID) @auth(level: USER) {
+  message_insert(data: { senderId_expr: "auth.uid", receiverId: $receiverId, content: $content, itemId: $itemId, timestamp_expr: "request.time" })
+}
+
+query ListMessages @auth(level: USER) {
+  messages(where: { _or: [{ senderId: { eq_expr: "auth.uid" } }, { receiverId: { eq_expr: "auth.uid" } }] }) { sender { username } content timestamp }
+}
