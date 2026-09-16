@@ -6,3 +6,4 @@ implmemt
 .env.*.local
 .firebase
 dist/index.html
+.firebase/*
