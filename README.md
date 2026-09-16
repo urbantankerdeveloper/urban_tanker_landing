@@ -97,6 +97,18 @@ npm start
 
 The app runs on `http://localhost:5173` (development) and binds to `0.0.0.0` for network access.
 
+## Automatic Firebase Deployment
+
+Pushes to `main` automatically run typecheck, build the Vite app, and deploy Firebase Hosting through [`.github/workflows/firebase-hosting.yml`](.github/workflows/firebase-hosting.yml).
+
+Add this repository secret in GitHub before the first push:
+
+```text
+FIREBASE_SERVICE_ACCOUNT_URBAN_TANKER_LANDING
+```
+
+Use a Firebase service-account JSON key for project `urban-tanker-landing` as the secret value. The workflow deploys Hosting only; deploy Realtime Database rules separately when security rules change.
+
 ## HTTP Requests
 
 All API requests automatically include the JWT token:
