@@ -266,7 +266,7 @@ export function CheckoutModal() {
                   setAppliedCoupon(null);
                   setError("");
                 }}
-                placeholder="Try ECRFIRST50"
+                placeholder="Enter coupon code"
                 disabled={busy}
               />
               {couponCode.trim() && !appliedCoupon && (
@@ -300,7 +300,7 @@ export function CheckoutModal() {
             <small>
               {appliedCoupon
                 ? `${appliedCoupon.code} applied. You save ${money(discount)}.`
-                : "50% off your first water tanker booking with ECRFIRST50."}
+                : "Select an eligible offer or enter a coupon code."}
             </small>
           </div>
           <Button
