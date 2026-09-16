@@ -113,7 +113,12 @@ export async function registerWithPassword(
 
 async function databaseCredentialAuth(action: 'login' | 'register', email: string, password: string, displayName?: string, role: LocalUser['role'] = 'customer'): Promise<LocalUser> {
   if (!firebaseAuth) throw new Error('Firebase is not configured.');
-  const response = await fetch(AUTH_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action, clientId: contentClientId, email, password, displayName, role }) });
+  let response: Response;
+  try {
+    response = await fetch(AUTH_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action, clientId: contentClientId, email, password, displayName, role }) });
+  } catch {
+    throw new Error('The database authentication service is unavailable. Deploy the Firebase auth function before signing in.');
+  }
   const payload = await response.json() as {customToken?: string; user?: {uid: string; email: string; displayName: string; phoneNumber: string | null; role: LocalUser['role']}; message?: string};
   if (!response.ok || !payload.customToken || !payload.user) throw new Error(payload.message || 'Database authentication failed.');
   const result = await signInWithCustomToken(firebaseAuth, payload.customToken);

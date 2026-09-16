@@ -49,7 +49,7 @@ function databaseUserPath(clientId: string, uid: string): string {
 }
 
 export const signInWithDatabaseCredentials = onRequest(async (request, response) => {
-	setCorsHeaders(response);
+	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
 	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
 	try {
@@ -86,8 +86,11 @@ export const signInWithDatabaseCredentials = onRequest(async (request, response)
 	}
 });
 
-function setCorsHeaders(response: {set: (field: string, value: string) => unknown}): void {
-	response.set('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || '*');
+function setCorsHeaders(response: {set: (field: string, value: string) => unknown}, request?: Request): void {
+	const allowedOrigins = (process.env.ALLOWED_ORIGIN || 'https://urban-tanker-landing.web.app,http://localhost:5173,http://localhost:5174').split(',').map(origin => origin.trim());
+	const requestOrigin = request?.get('Origin');
+	response.set('Access-Control-Allow-Origin', requestOrigin && allowedOrigins.includes(requestOrigin) ? requestOrigin : allowedOrigins[0]);
+	response.set('Vary', 'Origin');
 	response.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
 	response.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
 }
@@ -104,7 +107,7 @@ async function verifyCaller(request: Request) {
 }
 
 export const updateUserSignIn = onRequest(async (request, response) => {
-	setCorsHeaders(response);
+	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') {
 		response.status(204).send('');
 		return;
@@ -163,7 +166,7 @@ export const updateUserSignIn = onRequest(async (request, response) => {
 });
 
 export const createRazorpayOrder = onRequest(async (request, response) => {
-	setCorsHeaders(response);
+	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') {
 		response.status(204).send('');
 		return;
@@ -209,7 +212,7 @@ export const createRazorpayOrder = onRequest(async (request, response) => {
 });
 
 export const verifyRazorpayPayment = onRequest(async (request, response) => {
-	setCorsHeaders(response);
+	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') {
 		response.status(204).send('');
 		return;
