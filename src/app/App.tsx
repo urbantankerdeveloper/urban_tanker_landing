@@ -77,7 +77,7 @@ export function App() {
     {checkoutOpen && <CheckoutModal />}
   </>;
   return <>
-    <AppShell role={data.role} active={active} mobileNav={mobileNav} onRoleChange={role => setRole(role as Role)} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
+    <AppShell role={data.role} active={active} orderCount={data.orders.length} mobileNav={mobileNav} onRoleChange={role => setRole(role as Role)} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
       {data.role === 'vendor' && <VendorPortal view={active} />}
       {data.role === 'admin' && <AdminDashboard />}
     </AppShell>

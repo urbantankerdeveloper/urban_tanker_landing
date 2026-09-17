@@ -75,13 +75,13 @@ export async function getVendorAvailability(): Promise<boolean> {
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/dashboard`, { headers: { Authorization: `Bearer ${user.idToken}` } });
   if (!response.ok) throw new Error('Unable to load vendor availability.');
   const result = await response.json() as { vendor?: { available?: boolean; status?: string } };
-  return result.vendor?.available ?? result.vendor?.status === 'Online';
+  return result.vendor?.status === 'active' || result.vendor?.available === true;
 }
 
 export async function setVendorAvailability(available: boolean): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/availability`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ available }) });
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/availability`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ available, status: available ? 'active' : 'inactive' }) });
   if (!response.ok) throw new Error('Unable to update vendor availability.');
 }
 
@@ -121,7 +121,7 @@ export async function createUserProfile(profile: Profile, role: Role): Promise<v
   };
   
   const state = await readEncryptedState<AppData>();
-  const vendors = role === 'vendor' ? [...(state.value?.vendors || []), { uid: user.uid, name: profile.name, email: profile.email || user.email || '', driver: profile.name, phone: profile.phone, zone: '', vehicle: '', capacity: '', status: 'Unavailable', rating: '' }] : state.value?.vendors || [];
+  const vendors = role === 'vendor' ? [...(state.value?.vendors || []), { uid: user.uid, name: profile.name, email: profile.email || user.email || '', driver: profile.name, phone: profile.phone, zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, rating: '' }] : state.value?.vendors || [];
   await saveEncryptedState({ ...(state.value || {}), profile: userProfileData, vendors });
 }
 

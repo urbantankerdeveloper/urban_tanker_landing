@@ -1,6 +1,6 @@
 export type Role = 'customer' | 'vendor' | 'admin';
 export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support';
-export type OrderStatus = 'Vendor assigned' | 'Vendor accepted' | 'Vendor rejected' | 'En route' | 'Arrived' | 'Delivered';
+export type OrderStatus = 'Created' | 'Pending acceptance' | 'Accepted' | 'En route' | 'Arrived' | 'Delivered' | 'Rejected' | 'Vendor assigned' | 'Vendor accepted' | 'Vendor rejected';
 
 export interface Profile {
   name: string;
@@ -58,6 +58,7 @@ export interface Order {
   lastLocationUpdatedAt?: string;
   deliveryLatitude?: number;
   deliveryLongitude?: number;
+  statusHistory?: Array<{ status: OrderStatus; timestamp: string; actorUid?: string; actorRole?: Role }>;
 }
 
 export interface Vendor {
@@ -69,6 +70,7 @@ export interface Vendor {
   vehicle: string;
   capacity: string;
   status: string;
+  available?: boolean;
   rating: string;
   latitude?: number;
   longitude?: number;

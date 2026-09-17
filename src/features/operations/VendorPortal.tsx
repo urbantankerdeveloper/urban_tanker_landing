@@ -15,8 +15,8 @@ import { getVendorAvailability, loadVendorDashboard, setVendorAvailability, upda
 import { useEffect, useState } from "react";
 
 const stages: OrderStatus[] = [
-    "Vendor assigned",
-    "Vendor accepted",
+    "Created",
+    "Accepted",
     "En route",
     "Arrived",
     "Delivered",
@@ -42,9 +42,12 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             }, () => undefined, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
         }
         void loadVendorDashboard().then(result => {
-            setAvailable(result.vendor?.status === "Online");
+
+
+6            setAvailable(result.vendor?.status === "active" || result.vendor?.available === true);
             setVendorName(result.vendor?.name || data.profile?.name || "Vendor");
             setVendorOrders(result.orders || []);
+            useAppStore.setState(state => ({ data: { ...state.data, orders: result.orders || [] } }));
             const activeOrder = (result.orders || []).find(item => item.status !== "Delivered");
             if (activeOrder && stages.includes(activeOrder.status)) setStage(activeOrder.status);
         }).catch(() => {
@@ -77,12 +80,12 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     });
     const advance = async () => {
         if (!order) return;
-        if (stage === "Vendor assigned") {
+        if (stage === "Created" || stage === "Pending acceptance" || stage === "Vendor assigned") {
             setOperationBusy(true);
             try {
-                const accepted = { ...order, status: "Vendor accepted" as OrderStatus, vendorDecision: "accepted" as const };
+                const accepted = { ...order, status: "Accepted" as OrderStatus, vendorDecision: "accepted" as const };
                 await updateVendorOrder(accepted, { action: "accept" });
-                setStage("Vendor accepted");
+                setStage("Accepted");
                 setVendorOrders(current => current.map(item => item.id === order.id ? accepted : item));
                 onNotify("Order accepted. Customer tracking is now active.");
             } catch { onNotify("Unable to accept this order."); } finally { setOperationBusy(false); }
@@ -104,7 +107,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         }
         const next = stages[Math.min(index + 1, stages.length - 1)];
         setStage(next);
-        const location = next === "Vendor accepted" ? await readCurrentLocation() : {};
+        const location = next === "Accepted" ? await readCurrentLocation() : {};
         if (order) {
             const updatedOrder = {
                 ...order,
@@ -129,7 +132,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         if (!order || operationBusy) return;
         setOperationBusy(true);
         try {
-            await updateVendorOrder({ ...order, status: "Vendor rejected" }, { action: "reject" });
+            await updateVendorOrder({ ...order, status: "Rejected" }, { action: "reject" });
             setVendorOrders(current => current.filter(item => item.id !== order.id));
             onNotify("Order rejected and returned to dispatch.");
         } catch { onNotify("Unable to reject this order."); } finally { setOperationBusy(false); }
@@ -161,7 +164,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                 action={
                     <div className="heading-actions">
                         <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy}>
-                            {availabilityBusy ? "Updating..." : available ? "Available for bookings" : "Unavailable for bookings"}
+                            {availabilityBusy ? "Updating..." : available ? "Active for bookings" : "Inactive for bookings"}
                         </Button>
                         <Button variant="quiet" icon={Navigation} onClick={() => void shareLocation()} disabled={operationBusy}>Share location</Button>
                     </div>
@@ -227,7 +230,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                                 </div>
                             </div>
                             <div className="job-actions">
-                                {stage === "Vendor assigned" && <Button variant="quiet" icon={ShieldCheck} onClick={() => void rejectOrder()} disabled={operationBusy}>Reject order</Button>}
+                                {(stage === "Created" || stage === "Pending acceptance" || stage === "Vendor assigned") && <Button variant="quiet" icon={ShieldCheck} onClick={() => void rejectOrder()} disabled={operationBusy}>Reject order</Button>}
                                 <Button
                                     variant="quiet"
                                     icon={Phone}

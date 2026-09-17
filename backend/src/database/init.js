@@ -21,12 +21,13 @@ const collections = {
   vendors: {
     $jsonSchema: {
       bsonType: 'object',
-      required: ['uid', 'client_id', 'name', 'available', 'updated_at'],
+      required: ['uid', 'client_id', 'name', 'available', 'status', 'updated_at'],
       properties: {
         uid: { bsonType: 'string' },
         client_id: { bsonType: 'string' },
         name: { bsonType: 'string' },
         available: { bsonType: 'bool' },
+        status: { enum: ['active', 'inactive', 'Online', 'Unavailable'] },
         updated_at: { bsonType: 'date' },
       },
     },
@@ -42,10 +43,11 @@ const collections = {
         service: { bsonType: 'string' },
         deliveryLatitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
         deliveryLongitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
-        status: { enum: ['Vendor assigned', 'Vendor accepted', 'Vendor rejected', 'En route', 'Arrived', 'Delivered'] },
+        status: { enum: ['Created', 'Pending acceptance', 'Accepted', 'En route', 'Arrived', 'Delivered', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected'] },
         vendorDecision: { enum: ['pending', 'accepted', 'rejected'] },
         deliveryOtpHash: { bsonType: 'string' },
         otpVerifiedAt: { bsonType: 'date' },
+        statusHistory: { bsonType: 'array' },
         created: { bsonType: ['date', 'string'] },
       },
     },
@@ -128,6 +130,10 @@ const initDatabase = async () => {
     await db.collection('orders').createIndex({ client_id: 1, status: 1, assigned_vendor_uid: 1 }, { name: 'dispatch_queue' });
     await db.collection('vendors').createIndex({ client_id: 1, uid: 1 }, { unique: true, name: 'client_vendor_unique' });
     await db.collection('vendors').createIndex({ client_id: 1, available: 1 }, { name: 'available_vendors' });
+    await db.collection('vendors').createIndex({ client_id: 1, status: 1 }, { name: 'vendor_status' });
+    await db.collection('vendors').updateMany({ status: 'Online' }, { $set: { status: 'active' } });
+    await db.collection('vendors').updateMany({ status: 'Unavailable' }, { $set: { status: 'inactive' } });
+    await db.collection('vendors').updateMany({ status: { $exists: false } }, { $set: { status: 'inactive', available: false, updated_at: new Date() } });
     await db.collection('content').createIndex({ client_id: 1 }, { unique: true, name: 'client_content_unique' });
     await db.collection('content').updateOne(
       { client_id: 'urban-tanker' },

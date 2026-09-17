@@ -73,8 +73,8 @@ app.get('/api/vendor/dashboard', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const vendor = await vendorsCollection.findOne({ uid: req.user.uid, client_id: req.user.clientId }, { projection: { _id: 0 } });
-    const orders = await ordersCollection.find({ client_id: req.user.clientId, status: { $ne: 'Vendor rejected' }, $or: [{ assigned_vendor_uid: req.user.uid }, { status: 'Vendor assigned', assigned_vendor_uid: { $exists: false } }] }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(25).toArray();
-    const visibleOrders = orders.filter(order => order.assigned_vendor_uid === req.user.uid || (vendor?.available === true && (typeof vendor?.latitude !== 'number' || typeof vendor?.longitude !== 'number' || typeof order.deliveryLatitude !== 'number' || typeof order.deliveryLongitude !== 'number' || distanceKm(vendor.latitude, vendor.longitude, order.deliveryLatitude, order.deliveryLongitude) <= vendorDispatchRadiusKm)));
+    const orders = await ordersCollection.find({ client_id: req.user.clientId, status: { $nin: ['Rejected', 'Vendor rejected'] }, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(25).toArray();
+    const visibleOrders = orders.filter(order => order.assigned_vendor_uid === req.user.uid || (vendor?.status === 'active' && (typeof vendor?.latitude !== 'number' || typeof vendor?.longitude !== 'number' || typeof order.deliveryLatitude !== 'number' || typeof order.deliveryLongitude !== 'number' || distanceKm(vendor.latitude, vendor.longitude, order.deliveryLatitude, order.deliveryLongitude) <= vendorDispatchRadiusKm)));
     res.json({ vendor, orders: visibleOrders });
   } catch (error) {
     console.error('Vendor dashboard error:', error);
@@ -92,7 +92,17 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     order.client_id = req.user.clientId;
     order.owner_uid = req.user.uid;
     order.updated_at = new Date();
-    await ordersCollection.updateOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, { $set: order }, { upsert: true });
+    const existing = await ordersCollection.findOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, { projection: { status: 1 } });
+    const requestedStatus = order.status;
+    if (!existing && requestedStatus === 'Created') order.status = 'Pending acceptance';
+    const createdAt = new Date();
+    const statusHistory = requestedStatus === 'Created'
+      ? [{ status: 'Created', timestamp: createdAt, actorUid: req.user.uid, actorRole: req.user.role }, { status: 'Pending acceptance', timestamp: createdAt, actorUid: req.user.uid, actorRole: req.user.role }]
+      : [{ status: order.status, timestamp: createdAt, actorUid: req.user.uid, actorRole: req.user.role }];
+    const setOnInsert = { statusHistory };
+    const update = { $set: order, $setOnInsert: setOnInsert };
+    if (existing && existing.status !== order.status) update.$push = { statusHistory: { status: order.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } };
+    await ordersCollection.updateOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, update, { upsert: true });
     res.status(200).json({ id: order.id });
   } catch (error) {
     console.error('Order persistence error:', error);
@@ -103,9 +113,10 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 app.patch('/api/vendor/availability', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
-    const available = Boolean(req.body.available);
-    await vendorsCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId }, { $set: { available, status: available ? 'Online' : 'Unavailable', updated_at: new Date() } }, { upsert: true });
-    res.json({ available, status: available ? 'Online' : 'Unavailable' });
+    const status = req.body.status === 'active' || req.body.available === true ? 'active' : 'inactive';
+    const available = status === 'active';
+    await vendorsCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId }, { $set: { available, status, updated_at: new Date() } }, { upsert: true });
+    res.json({ available, status });
   } catch (error) {
     console.error('Vendor availability error:', error);
     res.status(500).json({ message: 'Unable to update vendor availability.' });
@@ -129,11 +140,11 @@ app.patch('/api/vendor/location', authenticateToken, async (req, res) => {
 app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
-    const allowedStatuses = ['Vendor assigned', 'Vendor accepted', 'Vendor rejected', 'En route', 'Arrived', 'Delivered'];
+    const allowedStatuses = ['Created', 'Pending acceptance', 'Accepted', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected', 'En route', 'Arrived', 'Delivered'];
     const update = {};
     const action = req.body.action;
     if (action === 'accept') {
-      update.status = 'Vendor accepted';
+      update.status = 'Accepted';
       update.vendorDecision = 'accepted';
       update.vendorAcceptedAt = new Date();
       update.assigned_vendor_uid = req.user.uid;
@@ -141,7 +152,7 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       update.vendorEmail = req.user.email;
       update.vendorPhone = req.user.phoneNumber || null;
     } else if (action === 'reject') {
-      update.status = 'Vendor rejected';
+      update.status = 'Rejected';
       update.vendorDecision = 'rejected';
       update.vendorRejectedAt = new Date();
     } else if (allowedStatuses.includes(req.body.status)) update.status = req.body.status;
@@ -159,9 +170,13 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
     if (typeof req.body.vendorLatitude === 'number' || typeof req.body.vendorLongitude === 'number') update.lastLocationUpdatedAt = new Date();
     if (!Object.keys(update).length) return res.status(400).json({ message: 'No valid order update was provided.' });
     const orderFilter = action === 'accept'
-      ? { id: req.params.orderId, client_id: req.user.clientId, $or: [{ assigned_vendor_uid: req.user.uid }, { status: 'Vendor assigned', assigned_vendor_uid: { $exists: false } }] }
+      ? { id: req.params.orderId, client_id: req.user.clientId, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }
       : { id: req.params.orderId, client_id: req.user.clientId, assigned_vendor_uid: req.user.uid };
-    const result = await ordersCollection.updateOne(orderFilter, { $set: update });
+    const existing = await ordersCollection.findOne(orderFilter, { projection: { status: 1 } });
+    if (!existing) return res.status(404).json({ message: 'Vendor order was not found.' });
+    const updateDocument = { $set: update };
+    if (update.status && existing.status !== update.status) updateDocument.$push = { statusHistory: { status: update.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } };
+    const result = await ordersCollection.updateOne(orderFilter, updateDocument);
     if (!result.matchedCount) return res.status(404).json({ message: 'Vendor order was not found.' });
     res.json({ id: req.params.orderId, ...update });
   } catch (error) {

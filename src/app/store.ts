@@ -57,7 +57,7 @@ let toastTimer: number | undefined;
 export const useAppStore = create<AppStore>((set, get) => ({
   data: initialState, content: defaultContent, isHydrated: false, active: 'overview', toast: '', mobileNav: false, checkoutOpen: false,
   authRole: 'customer', authName: '', authEmail: '', authPassword: '', authPhone: '', authBusy: false, authError: '', authRememberMe: true, checkoutMethod: 'UPI', adminQuery: '',
-  vendorStage: 'Vendor assigned', bookingDraft: initialState.booking,
+  vendorStage: 'Created', bookingDraft: initialState.booking,
   update: patch => {
     const next = { ...get().data, ...patch };
     set({ data: next });

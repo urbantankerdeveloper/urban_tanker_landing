@@ -84,7 +84,7 @@ export function CheckoutModal() {
       amount,
       discount,
       couponCode: appliedCoupon?.code,
-      status: "Vendor assigned",
+      status: "Created",
       vendorDecision: "pending",
       deliveryOtp: String(Math.floor(100000 + Math.random() * 900000)),
       vendor: "",
