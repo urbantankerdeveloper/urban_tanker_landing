@@ -115,7 +115,14 @@ app.patch('/api/vendor/availability', authenticateToken, async (req, res) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const status = req.body.status === 'active' || req.body.available === true ? 'active' : 'inactive';
     const available = status === 'active';
-    await vendorsCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId }, { $set: { available, status, updated_at: new Date() } }, { upsert: true });
+    await vendorsCollection.updateOne(
+      { uid: req.user.uid, client_id: req.user.clientId },
+      {
+        $set: { available, status, updated_at: new Date() },
+        $setOnInsert: { uid: req.user.uid, client_id: req.user.clientId, name: req.user.displayName || 'Vendor', email: req.user.email || '', phone: req.user.phoneNumber || null, driver: req.user.displayName || 'Vendor', zone: '', vehicle: '', capacity: '', rating: '' },
+      },
+      { upsert: true },
+    );
     res.json({ available, status });
   } catch (error) {
     console.error('Vendor availability error:', error);

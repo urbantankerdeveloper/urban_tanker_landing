@@ -43,8 +43,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         }
         void loadVendorDashboard().then(result => {
 
-
-6            setAvailable(result.vendor?.status === "active" || result.vendor?.available === true);
+            setAvailable(result.vendor?.status === "active" || result.vendor?.available === true);
             setVendorName(result.vendor?.name || data.profile?.name || "Vendor");
             setVendorOrders(result.orders || []);
             useAppStore.setState(state => ({ data: { ...state.data, orders: result.orders || [] } }));

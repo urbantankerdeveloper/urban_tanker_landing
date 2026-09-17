@@ -15,7 +15,8 @@ export async function authenticateToken(req, res, next) {
     return res.status(403).json({ message: 'Invalid or expired token' });
   }
 
-  const session = await sessionsCollection.findOne({ token_hash: hashToken(token), client_id: user.clientId, expires_at: { $gt: new Date() } });
+  const clientId = user.clientId || req.headers['x-client-id'] || 'urban-tanker';
+  const session = await sessionsCollection.findOne({ token_hash: hashToken(token), client_id: clientId, expires_at: { $gt: new Date() } });
   if (!session) {
     return res.status(401).json({ message: 'Session expired or revoked' });
   }
@@ -24,7 +25,7 @@ export async function authenticateToken(req, res, next) {
     return res.status(401).json({ message: 'Session identity does not match the account.' });
   }
 
-  req.user = user;
+  req.user = { ...user, clientId };
   next();
 }
 

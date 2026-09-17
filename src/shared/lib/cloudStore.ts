@@ -72,7 +72,7 @@ export async function subscribeToOperations(onOperations: (operations: Pick<AppD
 export async function getVendorAvailability(): Promise<boolean> {
   const user = getCurrentUser();
   if (!user) return false;
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/dashboard`, { headers: { Authorization: `Bearer ${user.idToken}` } });
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/dashboard`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
   if (!response.ok) throw new Error('Unable to load vendor availability.');
   const result = await response.json() as { vendor?: { available?: boolean; status?: string } };
   return result.vendor?.status === 'active' || result.vendor?.available === true;
@@ -81,14 +81,17 @@ export async function getVendorAvailability(): Promise<boolean> {
 export async function setVendorAvailability(available: boolean): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/availability`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ available, status: available ? 'active' : 'inactive' }) });
-  if (!response.ok) throw new Error('Unable to update vendor availability.');
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/availability`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ available, status: available ? 'active' : 'inactive' }) });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { message?: string };
+    throw new Error(payload.message || 'Unable to update vendor availability.');
+  }
 }
 
 export async function updateVendorLocation(latitude: number, longitude: number): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/location`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ latitude, longitude }) });
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/location`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ latitude, longitude }) });
   if (!response.ok) throw new Error('Unable to update vendor location.');
 }
 
