@@ -85,11 +85,15 @@ export function CheckoutModal() {
       discount,
       couponCode: appliedCoupon?.code,
       status: "Vendor assigned",
-      vendor: "BlueDrop Tankers",
-      driver: "Ravi Kumar",
+      vendorDecision: "pending",
+      deliveryOtp: String(Math.floor(100000 + Math.random() * 900000)),
+      vendor: "",
+      driver: "",
       eta: "35 min",
       payment,
       created: "Just now",
+      deliveryLatitude: data.location.latitude || undefined,
+      deliveryLongitude: data.location.longitude || undefined,
     });
   const applyCouponCode = (value: string) => {
     const code = value.trim().toUpperCase();

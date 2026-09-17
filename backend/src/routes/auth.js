@@ -1,6 +1,6 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
-import { sessionsCollection, usersCollection } from '../database/connection.js';
+import { sessionsCollection, usersCollection, vendorsCollection } from '../database/connection.js';
 import { randomUUID } from 'node:crypto';
 import { hashPassword, comparePassword, generateToken, hashToken } from '../utils/auth.js';
 import { authenticateToken } from '../middleware/auth.js';
@@ -71,7 +71,6 @@ router.post('/google', async (req, res) => {
 
     let user = await usersCollection.findOne({ email, client_id: clientId });
     if (!user) {
-      if (role && role !== 'customer') return res.status(403).json({ message: 'New Google accounts can only be created as customers.' });
       const now = new Date();
       user = {
         _id: randomUUID(),
@@ -80,7 +79,7 @@ router.post('/google', async (req, res) => {
         password_hash: await hashPassword(randomUUID()),
         display_name: googleUser.displayName || email.split('@')[0],
         phone_number: googleUser.phoneNumber || null,
-        role: 'customer',
+        role: role === 'vendor' || role === 'admin' ? role : 'customer',
         email_verified: true,
         phone_verified: false,
         created_at: now,
@@ -89,6 +88,13 @@ router.post('/google', async (req, res) => {
         client_id: clientId,
       };
       await usersCollection.insertOne(user);
+      if (user.role === 'vendor') {
+        await vendorsCollection.updateOne(
+          { uid: user.uid, client_id: clientId },
+          { $set: { uid: user.uid, client_id: clientId, name: user.display_name, email: user.email, phone: user.phone_number, driver: user.display_name, zone: '', vehicle: '', capacity: '', status: 'Unavailable', available: false, updated_at: new Date() } },
+          { upsert: true },
+        );
+      }
     } else {
       if (role && user.role !== role) return res.status(403).json({ message: `This account is registered as ${user.role}. Select the matching role.` });
       await usersCollection.updateOne({ _id: user._id, client_id: clientId }, { $set: { last_login: new Date(), updated_at: new Date() } });
@@ -150,6 +156,13 @@ router.post(
       };
 
       await usersCollection.insertOne(userData);
+      if (role === 'vendor') {
+        await vendorsCollection.updateOne(
+          { uid, client_id: clientId },
+          { $set: { uid, client_id: clientId, name: userData.display_name, email, phone: userData.phone_number, driver: userData.display_name, zone: '', vehicle: '', capacity: '', status: 'Unavailable', available: false, updated_at: new Date() } },
+          { upsert: true },
+        );
+      }
       const user = userData;
 
       const token = generateToken(user);

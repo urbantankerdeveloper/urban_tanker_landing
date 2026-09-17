@@ -9,6 +9,8 @@
     "dev:vendor": "vite --mode vendor --host 0.0.0.0",
     "dev:admin": "vite --mode admin --host 0.0.0.0",
     "dev:local": "vite",
+    "dev:all": "concurrently --kill-others-on-fail --names backend,frontend --prefix-colors blue,green \"npm --prefix backend run dev\" \"npm run dev\"",
+    "build:all": "npm run typecheck && npm run build && npm --prefix backend run build",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -33,6 +35,7 @@
     "eslint-plugin-react-refresh": "latest",
     "sass": "latest",
     "typescript": "latest",
+    "concurrently": "^9.2.1",
     "typescript-eslint": "latest"
   },
   "allowScripts": {

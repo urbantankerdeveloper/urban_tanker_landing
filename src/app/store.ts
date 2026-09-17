@@ -31,6 +31,7 @@ interface AppStore {
   setRole: (role: Role) => void;
   setMobileNav: (open: boolean) => void;
   notify: (message: string) => void;
+  dismissToast: () => void;
   setCheckoutOpen: (open: boolean) => void;
   setAuthRole: (role: Role) => void;
   setAuthName: (name: string) => void;
@@ -51,6 +52,8 @@ interface AppStore {
   requestLocation: () => Promise<void>;
 }
 
+let toastTimer: number | undefined;
+
 export const useAppStore = create<AppStore>((set, get) => ({
   data: initialState, content: defaultContent, isHydrated: false, active: 'overview', toast: '', mobileNav: false, checkoutOpen: false,
   authRole: 'customer', authName: '', authEmail: '', authPassword: '', authPhone: '', authBusy: false, authError: '', authRememberMe: true, checkoutMethod: 'UPI', adminQuery: '',
@@ -64,7 +67,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setActive: active => set({ active, mobileNav: false }),
   setRole: role => { get().update({ role }); set({ active: 'overview', mobileNav: false }); },
   setMobileNav: mobileNav => set({ mobileNav }),
-  notify: message => { set({ toast: message }); window.setTimeout(() => set({ toast: '' }), 2600); },
+  notify: message => {
+    if (toastTimer) window.clearTimeout(toastTimer);
+    set({ toast: message });
+    toastTimer = window.setTimeout(() => {
+      set({ toast: '' });
+      toastTimer = undefined;
+    }, 3200);
+  },
+  dismissToast: () => {
+    if (toastTimer) window.clearTimeout(toastTimer);
+    toastTimer = undefined;
+    set({ toast: '' });
+  },
   setCheckoutOpen: checkoutOpen => set({ checkoutOpen }),
   setAuthRole: authRole => set({ authRole }),
   setAuthName: authName => set({ authName }),
@@ -78,7 +93,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setAdminQuery: adminQuery => set({ adminQuery }),
   setVendorStage: vendorStage => set({ vendorStage }),
   setBookingDraft: (key, value) => set(state => ({ bookingDraft: { ...state.bookingDraft, [key]: value } })),
-  completeBooking: order => { get().update({ orders: [order, ...get().data.orders], pendingBooking: undefined }); set({ checkoutOpen: false, active: 'track' }); get().notify('Booking confirmed. BlueDrop Tankers is on the way.'); },
+  completeBooking: order => { get().update({ orders: [order, ...get().data.orders], pendingBooking: undefined }); set({ checkoutOpen: false, active: 'track' }); get().notify('Booking confirmed. A vendor will be assigned shortly.'); },
   updateOrder: order => get().update({ orders: get().data.orders.map(item => item.id === order.id ? order : item) })
   ,setHydrated: isHydrated => set({ isHydrated }),
   signOut: () => { signOutUser().catch(() => undefined); get().update({ profile: null }); set({ active: 'overview', checkoutOpen: false, mobileNav: false }); get().notify('You have signed out.'); }

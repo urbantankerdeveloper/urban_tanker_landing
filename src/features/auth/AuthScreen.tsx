@@ -11,6 +11,7 @@ import { useAppStore } from "../../app/store";
 import { useContent } from "../../shared/hooks/useContent";
 import type { Role } from "../../shared/lib/types";
 import { Button } from "../../shared/components/ui";
+import { Toast } from "../../shared/components/Toast";
 
 export function AuthScreen() {
   const appContent = useContent();
@@ -24,6 +25,7 @@ export function AuthScreen() {
     authBusy: busy,
     authError: error,
     authRememberMe: rememberMe,
+    toast,
     setAuthRole: setRole,
     setAuthName: setName,
     setAuthEmail: setEmail,
@@ -32,6 +34,8 @@ export function AuthScreen() {
     setAuthBusy: setBusy,
     setAuthError: setError,
     setAuthRememberMe: setRememberMe,
+    notify,
+    dismissToast,
     update,
   } = useAppStore();
   const [registering, setRegistering] = useState(false);
@@ -72,11 +76,9 @@ export function AuthScreen() {
     if (submitLock.current || busy) return;
     submitLock.current = true;
     setError("");
-    if (registering && !validatePhone()) return;
-    if (registering && role !== "customer") {
-      setError(
-        "Only customer accounts can self-register. Vendor and admin accounts must be provisioned by an administrator.",
-      );
+    if (registering && !validatePhone()) {
+      submitLock.current = false;
+      notify("Enter a valid 10-digit Indian mobile number.");
       return;
     }
     setBusy(true);
@@ -99,8 +101,7 @@ export function AuthScreen() {
         cause && typeof cause === "object" && "code" in cause
           ? String(cause.code)
           : "";
-      setError(
-        code === "auth/operation-not-allowed"
+      const message = code === "auth/operation-not-allowed"
           ? "Email and password sign-in is not available on the server."
           : code === "auth/invalid-credential" ||
             code === "auth/user-not-found" ||
@@ -108,31 +109,31 @@ export function AuthScreen() {
             ? "The email or password is incorrect, or this account is not registered."
             : cause instanceof Error
               ? cause.message
-              : `Unable to ${registering ? "register" : "sign in"}. Check your details.`,
-      );
+            : `Unable to ${registering ? "register" : "sign in"}. Check your details.`;
+      setError(message);
+      notify(message);
     } finally {
       setBusy(false);
       submitLock.current = false;
     }
   };
   const toggleMode = () => {
-    setRegistering((value) => !value);
+    const nextRegistering = !registering;
+    setRegistering(nextRegistering);
     setResetMode(false);
     setError("");
   };
   const google = async () => {
     if (submitLock.current || busy) return;
-    if (role !== "customer") {
-      setError("Google sign-in is available for customer accounts only.");
-      return;
-    }
     submitLock.current = true;
     setError("");
     setBusy(true);
     try {
       await complete(await signInWithGoogle(role));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to sign in with Google.");
+      const message = cause instanceof Error ? cause.message : "Unable to sign in with Google.";
+      setError(message);
+      notify(message);
     } finally {
       setBusy(false);
       submitLock.current = false;
@@ -149,13 +150,16 @@ export function AuthScreen() {
         ? await completePasswordReset(resetEmail.trim(), resetToken, resetPassword)
         : await requestPasswordReset(resetEmail.trim());
       setError(message);
+      notify(message);
       if (resetToken) {
         setResetMode(false);
         setResetPassword("");
         window.history.replaceState({}, "", window.location.pathname);
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to reset the password.");
+      const message = cause instanceof Error ? cause.message : "Unable to reset the password.";
+      setError(message);
+      notify(message);
     } finally {
       setBusy(false);
       submitLock.current = false;
@@ -346,16 +350,12 @@ export function AuthScreen() {
               <button className="auth-mode-toggle" type="button" onClick={() => setResetMode(false)}>Back to sign in</button>
             </form>
           )}
-          {error && (
-            <p className="auth-error" role="alert">
-              {error}
-            </p>
-          )}
           <p className="terms-note">
             <ShieldCheck size={13} /> {content.authNote}
           </p>
         </div>
       </section>
+      <Toast message={toast} onClose={dismissToast} />
     </main>
   );
 }

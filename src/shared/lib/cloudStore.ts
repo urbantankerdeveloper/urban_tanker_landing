@@ -53,6 +53,15 @@ export async function refreshCloudState(): Promise<CloudState> {
 
 export async function persistCloudState(state: CloudState): Promise<void> {
   await saveEncryptedState({ ...withoutUndefined(state), updatedAt: Date.now() });
+  const user = getCurrentUser();
+  if (user && Array.isArray(state.orders)) {
+    const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+    await Promise.all((state.orders as AppData['orders']).map(order => fetch(`${apiUrl}/api/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` },
+      body: JSON.stringify({ ...withoutUndefined(order), ownerUid: user.uid }),
+    }).then(response => { if (!response.ok) throw new Error('Unable to persist order.'); })));
+  }
 }
 
 export async function subscribeToOperations(onOperations: (operations: Pick<AppData, 'orders' | 'vendors'>) => void, onError: CloudErrorHandler): Promise<Unsubscribe> {
@@ -61,17 +70,41 @@ export async function subscribeToOperations(onOperations: (operations: Pick<AppD
 }
 
 export async function getVendorAvailability(): Promise<boolean> {
-  const state = await readEncryptedState<AppData>();
   const user = getCurrentUser();
-  return state.value?.vendors.find(vendor => vendor.uid === user?.uid)?.status === 'Online';
+  if (!user) return false;
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/dashboard`, { headers: { Authorization: `Bearer ${user.idToken}` } });
+  if (!response.ok) throw new Error('Unable to load vendor availability.');
+  const result = await response.json() as { vendor?: { available?: boolean; status?: string } };
+  return result.vendor?.available ?? result.vendor?.status === 'Online';
 }
 
 export async function setVendorAvailability(available: boolean): Promise<void> {
-  const state = await readEncryptedState<AppData>();
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const vendors = (state.value?.vendors || []).map(vendor => vendor.uid === user.uid ? { ...vendor, status: available ? 'Online' : 'Unavailable' } : vendor);
-  await saveEncryptedState({ ...(state.value || {}), vendors });
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/availability`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ available }) });
+  if (!response.ok) throw new Error('Unable to update vendor availability.');
+}
+
+export async function updateVendorLocation(latitude: number, longitude: number): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/location`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ latitude, longitude }) });
+  if (!response.ok) throw new Error('Unable to update vendor location.');
+}
+
+export async function loadVendorDashboard(): Promise<{ vendor?: Vendor; orders: AppData['orders'] }> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/dashboard`, { headers: { Authorization: `Bearer ${user.idToken}` } });
+  if (!response.ok) throw new Error('Unable to load vendor data.');
+  return await response.json() as { vendor?: Vendor; orders: AppData['orders'] };
+}
+
+export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; deliveryOtp?: string } = {}): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'}/api/vendor/orders/${encodeURIComponent(order.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ action: options.action, deliveryOtp: options.deliveryOtp, status: order.status, eta: order.eta, vendorLatitude: order.vendorLatitude, vendorLongitude: order.vendorLongitude }) });
+  if (!response.ok) throw new Error('Unable to update vendor order.');
 }
 
 export async function createUserProfile(profile: Profile, role: Role): Promise<void> {
@@ -88,7 +121,7 @@ export async function createUserProfile(profile: Profile, role: Role): Promise<v
   };
   
   const state = await readEncryptedState<AppData>();
-  const vendors = role === 'vendor' ? [...(state.value?.vendors || []), { uid: user.uid, name: profile.name, email: profile.email || user.email || '', driver: profile.name, phone: profile.phone, zone: '', vehicle: '', capacity: '', status: 'Online', rating: '' }] : state.value?.vendors || [];
+  const vendors = role === 'vendor' ? [...(state.value?.vendors || []), { uid: user.uid, name: profile.name, email: profile.email || user.email || '', driver: profile.name, phone: profile.phone, zone: '', vehicle: '', capacity: '', status: 'Unavailable', rating: '' }] : state.value?.vendors || [];
   await saveEncryptedState({ ...(state.value || {}), profile: userProfileData, vendors });
 }
 

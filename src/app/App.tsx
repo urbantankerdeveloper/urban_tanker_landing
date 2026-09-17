@@ -13,7 +13,7 @@ import type { AppContent } from '../shared/lib/content';
 import type { Role, Workspace } from '../shared/lib/types';
 
 export function App() {
-  const { data, isHydrated, active, toast, mobileNav, checkoutOpen, setRole, setActive, setMobileNav, notify, setCheckoutOpen, setHydrated, signOut } = useAppStore();
+  const { data, isHydrated, active, toast, mobileNav, checkoutOpen, setRole, setActive, setMobileNav, notify, setCheckoutOpen, setHydrated, signOut, dismissToast } = useAppStore();
   const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
@@ -73,15 +73,15 @@ export function App() {
   if (!data.profile) return <AuthScreen />;
   if (data.role === 'customer') return <>
     <CustomerHomeShell onNavigate={setActive} onSignOut={signOut}><CustomerPortal /></CustomerHomeShell>
-    <Toast message={toast} />
+    <Toast message={toast} onClose={dismissToast} />
     {checkoutOpen && <CheckoutModal />}
   </>;
   return <>
     <AppShell role={data.role} active={active} mobileNav={mobileNav} onRoleChange={role => setRole(role as Role)} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
-      {data.role === 'vendor' && <VendorPortal />}
+      {data.role === 'vendor' && <VendorPortal view={active} />}
       {data.role === 'admin' && <AdminDashboard />}
     </AppShell>
-    <Toast message={toast} />
+    <Toast message={toast} onClose={dismissToast} />
     {checkoutOpen && <CheckoutModal />}
   </>;
 }
