@@ -4,6 +4,7 @@ dist/
 implmemt 
 .env.local
 .env.*.local
+atlas-credentials.env
 .firebase
 dist/index.html
 .firebase/*

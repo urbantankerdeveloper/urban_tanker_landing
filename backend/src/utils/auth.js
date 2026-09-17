@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { createHash } from 'node:crypto';
 
 export async function hashPassword(password) {
   const salt = await bcrypt.genSalt(10);
@@ -14,9 +15,10 @@ export function generateToken(user) {
   return jwt.sign(
     {
       uid: user.uid,
-      id: user.id,
+      id: user.uid,
       email: user.email,
       role: user.role,
+      clientId: user.client_id,
       displayName: user.display_name,
       phoneNumber: user.phone_number,
     },
@@ -39,4 +41,8 @@ export function decodeToken(token) {
   } catch (error) {
     return null;
   }
+}
+
+export function hashToken(token) {
+  return createHash('sha256').update(token).digest('hex');
 }

@@ -1,36 +1,18 @@
 # Urban Tanker Backend API
 
-Complete REST API backend with PostgreSQL database for Urban Tanker application.
+Complete REST API backend with MongoDB database for Urban Tanker application.
 
 ## Prerequisites
 
 - Node.js 18+ installed
-- PostgreSQL 12+ installed and running
+- MongoDB Atlas cluster or MongoDB 6+ installed and running
 - npm or yarn package manager
 
 ## Setup Instructions
 
 ### 1. Database Setup
 
-Install PostgreSQL if not already installed:
-
-```bash
-# macOS (using Homebrew)
-brew install postgresql@15
-
-# Ubuntu/Debian
-sudo apt-get install postgresql postgresql-contrib
-
-# Windows: Download from https://www.postgresql.org/download/windows/
-```
-
-Start PostgreSQL service and create a database:
-
-```bash
-# Create database and user
-createdb urban_tanker
-createuser urban_tanker_user
-```
+Create a MongoDB Atlas database user and allow the backend host in Atlas Network Access. MongoDB creates the `urban_tanker` database when the initializer creates its collections.
 
 ### 2. Backend Installation
 
@@ -47,17 +29,16 @@ Copy `.env.example` to `.env.local` and update values:
 cp .env.example .env.local
 ```
 
-Edit `.env.local`:
+Edit `.env.local` with a newly rotated Atlas credential:
 ```env
-DATABASE_URL=postgresql://urban_tanker_user:password@localhost:5432/urban_tanker
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-host>/?retryWrites=true&w=majority
+MONGODB_DB_NAME=urban_tanker
 JWT_SECRET=your-secret-key-change-in-production-12345
 JWT_EXPIRE=7d
 PORT=5000
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
 ```
-
-Update PostgreSQL connection string with your actual credentials.
 
 ### 4. Initialize Database
 
@@ -67,10 +48,24 @@ Run the database initialization script to create tables:
 npm run db:init
 ```
 
-This will create:
-- `users` table with all required fields
-- `sessions` table for token management
-- Indexes for optimal performance
+This creates and validates these collections:
+- `users`: customer, vendor, and admin accounts distinguished by the `role` field
+- `vendors`: vendor availability and dispatch metadata
+- `orders`: customer bookings and delivery status
+- `content`: tenant-specific application content and coupons
+- `sessions`: expiring session records
+
+It also creates tenant-aware unique indexes for users and vendors, dispatch/order indexes, and a TTL index for sessions.
+
+The `content` document is keyed by `client_id` and stores UI configuration in `config` plus coupon records in `coupons`. The default app copy remains the frontend fallback; tenant-specific values can be added to the MongoDB `config` object without changing application code.
+
+## Performance Defaults
+
+- MongoDB connections are reused through one process-wide client pool.
+- The default pool allows 20 concurrent database connections per backend instance, with a 5-second wait-queue timeout.
+- JSON request bodies are limited to 64 KB and responses are compressed when useful.
+- Tenant content is cached in memory for 60 seconds and protected-session lookups use a compound index.
+- For higher traffic, run multiple backend instances behind a load balancer and size `MONGODB_MAX_POOL_SIZE` per instance so the combined pool stays within the Atlas connection limit.
 
 ### 5. Start Backend Server
 
@@ -268,7 +263,7 @@ curl -X GET http://localhost:5000/api/auth/me \
 3. **CORS**: Configure allowed origins based on your domain
 4. **HTTPS**: Use HTTPS in production
 5. **Environment Variables**: Never commit `.env` file to version control
-6. **SQL Injection**: Uses parameterized queries
+6. **MongoDB Injection**: Validates request input before database operations
 7. **CSRF Protection**: Implement in production if needed
 8. **Rate Limiting**: Add rate limiting middleware for production
 
@@ -288,9 +283,9 @@ curl -X GET http://localhost:5000/api/auth/me \
 ## Troubleshooting
 
 ### Connection refused
-- Ensure PostgreSQL is running: `pg_isready`
-- Check DATABASE_URL in `.env.local`
-- Verify database exists: `psql -l`
+- Ensure MongoDB Atlas network access allows the backend host
+- Check `MONGODB_URI` and `MONGODB_DB_NAME` in `.env.local`
+- Run `npm run db:init` to verify connectivity and indexes
 
 ### Port already in use
 - Change PORT in `.env.local`
@@ -298,7 +293,7 @@ curl -X GET http://localhost:5000/api/auth/me \
 
 ### Database not initialized
 - Run: `npm run db:init`
-- Check PostgreSQL logs for errors
+- Check MongoDB Atlas connection and database-user permissions
 
 ### JWT errors
 - Ensure JWT_SECRET is set in `.env.local`

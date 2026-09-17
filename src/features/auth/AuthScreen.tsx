@@ -1,0 +1,361 @@
+import { Fragment, FormEvent, useRef, useState } from "react";
+import { ArrowRight, Droplets, ShieldCheck } from "lucide-react";
+import {
+  registerWithPassword,
+  requestPasswordReset,
+  completePasswordReset,
+  signInWithPassword,
+  signInWithGoogle,
+} from "./auth";
+import { useAppStore } from "../../app/store";
+import { useContent } from "../../shared/hooks/useContent";
+import type { Role } from "../../shared/lib/types";
+import { Button } from "../../shared/components/ui";
+
+export function AuthScreen() {
+  const appContent = useContent();
+  const content = appContent.auth;
+  const {
+    authRole: role,
+    authName: name,
+    authEmail: email,
+    authPassword: password,
+    authPhone: phone,
+    authBusy: busy,
+    authError: error,
+    authRememberMe: rememberMe,
+    setAuthRole: setRole,
+    setAuthName: setName,
+    setAuthEmail: setEmail,
+    setAuthPassword: setPassword,
+    setAuthPhone: setPhone,
+    setAuthBusy: setBusy,
+    setAuthError: setError,
+    setAuthRememberMe: setRememberMe,
+    update,
+  } = useAppStore();
+  const [registering, setRegistering] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get("resetToken") || "");
+  const [resetEmail, setResetEmail] = useState(() => new URLSearchParams(window.location.search).get("resetEmail") || email);
+  const submitLock = useRef(false);
+  const validatePhone = () => {
+    const normalized = phone.replace(/\D/g, "");
+    if (!/^[6-9]\d{9}$/.test(normalized)) {
+      setError("Enter a valid 10-digit Indian mobile number.");
+      return null;
+    }
+    return normalized;
+  };
+  const complete = async (user: {
+    displayName: string | null;
+    email: string | null;
+    phoneNumber: string | null;
+    role?: Role;
+  }) => {
+    update({
+      role: user.role || role,
+      profile: {
+        name:
+          user.displayName ||
+          name.trim() ||
+          email.split("@")[0] ||
+          "Urban Tanker user",
+        email: user.email || email,
+        phone: user.phoneNumber || phone,
+      },
+    });
+  };
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitLock.current || busy) return;
+    submitLock.current = true;
+    setError("");
+    if (registering && !validatePhone()) return;
+    if (registering && role !== "customer") {
+      setError(
+        "Only customer accounts can self-register. Vendor and admin accounts must be provisioned by an administrator.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      if (registering) {
+        await complete(
+          await registerWithPassword(
+            email.trim(),
+            password,
+            name.trim() || undefined,
+            phone,
+            role,
+          ),
+        );
+      } else {
+        await complete(await signInWithPassword(email.trim(), password, role));
+      }
+    } catch (cause) {
+      const code =
+        cause && typeof cause === "object" && "code" in cause
+          ? String(cause.code)
+          : "";
+      setError(
+        code === "auth/operation-not-allowed"
+          ? "Email and password sign-in is not available on the server."
+          : code === "auth/invalid-credential" ||
+            code === "auth/user-not-found" ||
+            code === "auth/wrong-password"
+            ? "The email or password is incorrect, or this account is not registered."
+            : cause instanceof Error
+              ? cause.message
+              : `Unable to ${registering ? "register" : "sign in"}. Check your details.`,
+      );
+    } finally {
+      setBusy(false);
+      submitLock.current = false;
+    }
+  };
+  const toggleMode = () => {
+    setRegistering((value) => !value);
+    setResetMode(false);
+    setError("");
+  };
+  const google = async () => {
+    if (submitLock.current || busy) return;
+    if (role !== "customer") {
+      setError("Google sign-in is available for customer accounts only.");
+      return;
+    }
+    submitLock.current = true;
+    setError("");
+    setBusy(true);
+    try {
+      await complete(await signInWithGoogle(role));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to sign in with Google.");
+    } finally {
+      setBusy(false);
+      submitLock.current = false;
+    }
+  };
+  const handlePasswordReset = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitLock.current || busy) return;
+    submitLock.current = true;
+    setError("");
+    setBusy(true);
+    try {
+      const message = resetToken
+        ? await completePasswordReset(resetEmail.trim(), resetToken, resetPassword)
+        : await requestPasswordReset(resetEmail.trim());
+      setError(message);
+      if (resetToken) {
+        setResetMode(false);
+        setResetPassword("");
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to reset the password.");
+    } finally {
+      setBusy(false);
+      submitLock.current = false;
+    }
+  };
+  return (
+    <main className="auth-page" aria-labelledby="auth-title">
+      <section className="auth-story" aria-label={content.storyEyebrow}>
+        <div className="brand auth-brand">
+          <span className="brand-mark">
+            <Droplets size={18} />
+          </span>
+          <span>{appContent.brand.name}</span>
+        </div>
+        <div className="auth-story-copy">
+          <span className="eyebrow">{content.storyEyebrow}</span>
+          <h1>{content.storyTitle}</h1>
+          <p>{content.storyCopy}</p>
+          <div className="auth-proof">
+            {content.proof.map((item) => (
+              <Fragment key={item.number}>
+                <span key={`${item.number}-number`}>{item.number}</span>
+                <b key={`${item.number}-label`}>{item.label}</b>
+              </Fragment>
+            ))}
+          </div>
+        </div>
+      </section>
+      <section className="auth-panel">
+        <div className="auth-panel-inner">
+          <span className="eyebrow">{content.eyebrow}</span>
+          <h2 id="auth-title">
+            {registering ? content.registerTitle : content.title}
+          </h2>
+          <p className="modal-copy">
+            {registering ? content.registerDescription : content.description}
+          </p>
+          <div
+            className="role-switcher"
+            role="tablist"
+            aria-label={content.accountTypeLabel}
+          >
+            {(["customer", "vendor", "admin"] as Role[]).map((item) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={role === item}
+                className={role === item ? "active" : ""}
+                onClick={() => {
+                  setRole(item);
+                  setError("");
+                }}
+                key={item}
+              >
+                {content.roles[item]}
+              </button>
+            ))}
+          </div>
+          <p className="selected-role" aria-live="polite">
+            <span>
+              {registering
+                ? content.selectedRegisterRole || "Registering as"
+                : content.selectedSignInRole || "Signing in as"}
+            </span>
+            <strong>{content.roles[role]}</strong>
+          </p>
+          <button className="google-auth-button" type="button" onClick={() => void google()} disabled={busy}>
+            <span aria-hidden="true">G</span>
+            {busy ? content.googleConnecting : `${content.signIn} with Google`}
+          </button>
+          <div className="auth-divider">
+            <span>{content.emailDivider}</span>
+          </div>
+          <form className="auth-form" onSubmit={submit} noValidate>
+            {registering && (
+              <label htmlFor="auth-name">
+                {role === "customer"
+                  ? content.fullNameLabel
+                  : content.organisationLabel}
+                <input
+                  id="auth-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  autoComplete="name"
+                  placeholder={
+                    role === "customer"
+                      ? content.fullNamePlaceholder
+                      : content.organisationPlaceholder
+                  }
+                  required
+                />
+              </label>
+            )}
+            {registering && (
+              <label htmlFor="auth-phone">
+                {content.mobileLabel}
+                <input
+                  id="auth-phone"
+                  value={phone}
+                  onChange={(event) =>
+                    setPhone(event.target.value.replace(/\D/g, "").slice(0, 10))
+                  }
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  placeholder={content.phonePlaceholder}
+                  pattern="[6-9][0-9]{9}"
+                  aria-describedby="auth-phone-help"
+                  required
+                />
+                <small id="auth-phone-help">{content.phoneHelp}</small>
+              </label>
+            )}
+            <label htmlFor="auth-email">
+              {content.emailLabel}
+              <input
+                id="auth-email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                type="email"
+                autoComplete="email"
+                placeholder={
+                  role === "admin"
+                    ? content.adminEmailPlaceholder
+                    : content.emailPlaceholder
+                }
+                required
+              />
+            </label>
+            <label htmlFor="auth-password">
+              {content.passwordLabel}
+              <input
+                id="auth-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                autoComplete={registering ? "new-password" : "current-password"}
+                placeholder={
+                  registering
+                    ? content.registerPasswordPlaceholder
+                    : content.passwordPlaceholder
+                }
+                minLength={6}
+                required
+              />
+            </label>
+            <label className="remember-option" htmlFor="remember-me">
+              <input
+                id="remember-me"
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(event) => setRememberMe(event.target.checked)}
+              />{" "}
+              <span>{content.remember}</span>
+            </label>
+            <Button type="submit" variant="primary full" icon={ArrowRight}>
+              {busy
+                ? registering
+                  ? content.registerBusy
+                  : content.signInBusy
+                : registering
+                  ? `${content.register} ${content.roles[role]}`
+                  : `${content.signIn} ${content.roles[role]}`}
+            </Button>
+          </form>
+          <div className="auth-link-row">
+            {!registering && !resetMode && (
+              <button className="auth-mode-toggle" type="button" onClick={() => setResetMode(true)}>
+                Forgot password?
+              </button>
+            )}
+            {!resetMode && (
+              <button
+                className="auth-mode-toggle"
+                type="button"
+                onClick={toggleMode}
+              >
+                {registering ? content.toggleSignIn : content.toggleRegister}
+              </button>
+            )}
+          </div>
+          {resetMode && (
+            <form className="auth-form reset-form" onSubmit={handlePasswordReset}>
+              <p className="modal-copy">{resetToken ? "Choose a new password." : "Enter your email and we will send a secure reset link."}</p>
+              <label htmlFor="reset-email">Email address<input id="reset-email" type="email" value={resetEmail} onChange={event => setResetEmail(event.target.value)} required /></label>
+              {resetToken && <label htmlFor="reset-password">New password<input id="reset-password" type="password" value={resetPassword} onChange={event => setResetPassword(event.target.value)} minLength={8} required /></label>}
+              <Button type="submit" variant="primary full" disabled={busy}>{busy ? "Sending..." : resetToken ? "Reset password" : "Send reset link"} <ArrowRight size={16} /></Button>
+              <button className="auth-mode-toggle" type="button" onClick={() => setResetMode(false)}>Back to sign in</button>
+            </form>
+          )}
+          {error && (
+            <p className="auth-error" role="alert">
+              {error}
+            </p>
+          )}
+          <p className="terms-note">
+            <ShieldCheck size={13} /> {content.authNote}
+          </p>
+        </div>
+      </section>
+    </main>
+  );
+}

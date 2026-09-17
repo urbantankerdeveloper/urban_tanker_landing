@@ -1,50 +1,39 @@
 # Urban Tanker Operations
 
-Modern React/Vite implementation of the Urban Tanker prototype with Firebase Authentication and Realtime Database. It covers the customer booking and tracking workflow, vendor dispatch workflow, and admin operations dashboard in one responsive application.
+Modern React/Vite implementation of the Urban Tanker prototype with MongoDB-backed Express authentication and session-backed operations. It covers the customer booking and tracking workflow, vendor dispatch workflow, and admin operations dashboard in one responsive application.
 
-## ⚡ Quick Start (Firebase + Express Backend)
+## ⚡ Quick Start (MongoDB + Express Backend)
 
 ### Prerequisites
 - **Node.js** 18+
-- **Firebase Project** (free at https://console.firebase.google.com)
+- **MongoDB Atlas** cluster
 
 ### Setup (5 minutes)
 
-1. **Create Firebase Project** (if you don't have one)
-   - Go to https://console.firebase.google.com
-   - Create new project
-   - Enable Realtime Database
-
-2. **Get Firebase Credentials**
-   - Settings → Service Accounts
-   - Click "Generate New Private Key"
-   - Save the JSON file
-
-3. **Setup Backend**
+1. **Setup MongoDB Backend**
    ```bash
    cd backend
    npm install
    cp .env.example .env.local
-   # Edit .env.local with Firebase credentials (see FIREBASE_SETUP.md)
+   # Edit .env.local with a rotated MongoDB Atlas URI
    npm run db:init
    npm run dev
    ```
 
-4. **Setup Frontend** (new terminal)
+2. **Setup Frontend** (new terminal)
    ```bash
    npm install
    cp .env.example .env.local
    npm run dev
    ```
 
-5. **Open App**
+3. **Open App**
    - Visit `http://localhost:5173`
    - Register and login!
 
 ## 📚 Documentation
 
-- **[FIREBASE_SETUP.md](./FIREBASE_SETUP.md)** - Complete Firebase setup guide
-- **[MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)** - Migration from PostgreSQL
+- **[backend/README.md](./backend/README.md)** - MongoDB backend setup and API reference
 - **[backend/README.md](./backend/README.md)** - Backend API documentation
 
 ## Architecture
@@ -52,14 +41,14 @@ Modern React/Vite implementation of the Urban Tanker prototype with Firebase Aut
 ### Authentication System
 
 This app uses a **hybrid approach**:
-- ✅ **Firebase Firestore** - Stores user data and application data
+- ✅ **MongoDB** - Stores customer, vendor, and admin accounts through one role-validated `users` collection
 - ✅ **Express.js Backend** - RESTful API with JWT authentication
 - ✅ **JWT Tokens** - Stateless authentication (7 day expiration)
 - ✅ **Email/Password Login** - Standard web authentication flow
 - ✅ **Role-Based Access** - Customer, Vendor, and Admin roles
 
 ```
-User Registration → Bcrypt Hash → Firestore Storage
+User Registration → Bcrypt Hash → MongoDB Storage
          ↓
     Login → Verify Password → Generate JWT
          ↓
@@ -160,7 +149,7 @@ The backend runs on `http://localhost:5000` and provides:
 - Role-based access control (customer, vendor, admin)
 - Secure password storage (bcryptjs with 10 salt rounds)
 - JWT token management (7 day expiration)
-- Firebase Firestore integration
+- MongoDB integration for authentication and operational collections
 - Request validation and error handling
 
 See [backend/README.md](./backend/README.md) for full backend documentation.
@@ -180,10 +169,9 @@ VITE_CONTENT_CLIENT_ID=urban-tanker
 ### Backend (backend/.env.local)
 
 ```env
-# Firebase Credentials (from service account JSON)
-FIREBASE_PROJECT_ID=your-project-id
-FIREBASE_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n
-FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
+# MongoDB Atlas
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-host>/?retryWrites=true&w=majority
+MONGODB_DB_NAME=urban_tanker
 
 # JWT
 JWT_SECRET=your-secret-key
@@ -195,7 +183,7 @@ NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
 ```
 
-See [FIREBASE_SETUP.md](./FIREBASE_SETUP.md) for detailed setup instructions.
+See [backend/README.md](./backend/README.md) for detailed setup instructions.
 
 ## Project Structure
 
@@ -204,7 +192,7 @@ urban_tanker_landing/
 ├── backend/                    # Node.js + Express API
 │   ├── src/
 │   │   ├── server.js          # Express app
-│   │   ├── database/          # Firebase setup
+│   │   ├── database/          # MongoDB connection and initialization
 │   │   ├── routes/            # API endpoints
 │   │   ├── middleware/        # Auth middleware
 │   │   └── utils/             # Helpers
@@ -217,8 +205,6 @@ urban_tanker_landing/
 │   ├── types.ts               # TypeScript types
 │   └── styles.scss            # Styling
 │
-├── FIREBASE_SETUP.md          # Firebase setup guide
-├── MIGRATION_GUIDE.md         # PostgreSQL → Firestore migration
 └── package.json
 ```
 
@@ -249,7 +235,7 @@ urban_tanker_landing/
 
 - **Password Hashing**: bcryptjs with 10 salt rounds
 - **JWT Tokens**: Stateless authentication with signature verification
-- **Firestore Security**: Rules-based access control
+- **MongoDB Sessions**: Hashed, expiring server-side sessions
 - **CORS Protection**: Configurable allowed origins
 - **Input Validation**: Email, password, and phone validation
 - **Rate Limiting**: Configurable per endpoint
@@ -279,21 +265,14 @@ npm run preview
 ## Troubleshooting
 
 ### Backend won't start
-- Ensure Firebase credentials are correct
-- Check FIREBASE_PROJECT_ID matches your Firebase project
-- Run `npm run db:init` to test connection
+- Ensure MongoDB Atlas credentials and network access are correct
+- Check `MONGODB_URI` and `MONGODB_DB_NAME` in `backend/.env.local`
+- Run `npm run db:init` to test the connection
 
 ### Frontend can't reach backend
 - Ensure backend is running on port 5000
 - Check VITE_API_BASE_URL in `.env.local`
 - Check browser console for CORS errors
-
-### Firebase connection fails
-- Verify FIREBASE_PRIVATE_KEY has correct format with `\n`
-- Check FIREBASE_CLIENT_EMAIL matches service account
-- Ensure Firestore Database is enabled in Firebase Console
-
-For detailed troubleshooting, see [FIREBASE_SETUP.md](./FIREBASE_SETUP.md).
 
 ## Production Deployment
 
@@ -305,9 +284,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 2. Set environment variables in your hosting platform:
-   - FIREBASE_PROJECT_ID
-   - FIREBASE_PRIVATE_KEY
-   - FIREBASE_CLIENT_EMAIL
+   - MONGODB_URI
+   - MONGODB_DB_NAME
    - JWT_SECRET
    - CORS_ORIGIN (your frontend URL)
 
@@ -320,12 +298,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 2. Deploy frontend
 3. Test login/registration
 
-See [FIREBASE_SETUP.md](./FIREBASE_SETUP.md) for detailed deployment instructions.
-
 ## License
 
 See [LICENSE](./LICENSE)
 
 ---
 
-**Next**: Read [FIREBASE_SETUP.md](./FIREBASE_SETUP.md) for complete Firebase setup instructions
+**Next**: Read [backend/README.md](./backend/README.md) for backend setup and deployment instructions

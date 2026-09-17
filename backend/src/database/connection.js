@@ -1,30 +1,42 @@
-import admin from 'firebase-admin';
 import dotenv from 'dotenv';
+import { MongoClient } from 'mongodb';
 
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-// Initialize Firebase Admin SDK
-const firebaseConfig = {
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-};
+const uri = process.env.MONGODB_URI;
+const databaseName = process.env.MONGODB_DB_NAME || 'urban_tanker';
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(firebaseConfig),
-  });
+if (!uri) {
+  throw new Error('MONGODB_URI is required. Set it in backend/.env.local.');
 }
 
-export const db = admin.firestore();
+const client = new MongoClient(uri, {
+  maxPoolSize: Number(process.env.MONGODB_MAX_POOL_SIZE || 20),
+  minPoolSize: 0,
+  maxIdleTimeMS: 300000,
+  maxConnecting: 4,
+  waitQueueTimeoutMS: 5000,
+  serverSelectionTimeoutMS: 5000,
+  connectTimeoutMS: 10000,
+  socketTimeoutMS: 30000,
+});
 
-// Collection references
-export const usersCollection = db.collection('users');
-export const sessionsCollection = db.collection('sessions');
+const databasePromise = client.connect().then(() => client.db(databaseName));
+
+export async function getDatabase() {
+  return databasePromise;
+}
+
+export const usersCollection = (await databasePromise).collection('users');
+export const sessionsCollection = (await databasePromise).collection('sessions');
+export const ordersCollection = (await databasePromise).collection('orders');
+export const vendorsCollection = (await databasePromise).collection('vendors');
+export const contentCollection = (await databasePromise).collection('content');
 
 export async function closeConnection() {
-  // Firestore connections don't need explicit closing
-  console.log('Firebase connection closed');
+  await client.close();
+  console.log('MongoDB connection closed');
 }
 
-export default db;
+export default databasePromise;

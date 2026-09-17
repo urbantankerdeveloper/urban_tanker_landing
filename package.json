@@ -16,10 +16,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@dataconnect/generated": "file:src/dataconnect-generated",
     "@vitejs/plugin-react": "latest",
     "firebase": "latest",
-    "firebase-functions": "^7.4.0",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
@@ -38,7 +36,6 @@
     "typescript-eslint": "latest"
   },
   "allowScripts": {
-    "@firebase/util@1.15.3": true,
     "@parcel/watcher@2.6.0": true,
     "protobufjs@7.6.6": true
   }

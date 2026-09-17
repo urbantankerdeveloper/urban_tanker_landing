@@ -1,7 +1,8 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
-import { usersCollection } from '../database/connection.js';
-import { hashPassword, comparePassword, generateToken, verifyToken } from '../utils/auth.js';
+import { sessionsCollection, usersCollection } from '../database/connection.js';
+import { randomUUID } from 'node:crypto';
+import { hashPassword, comparePassword, generateToken, hashToken } from '../utils/auth.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -36,6 +37,72 @@ const handleValidationErrors = (req, res, next) => {
   next();
 };
 
+async function createSession(user, token) {
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  await sessionsCollection.insertOne({
+    token_hash: hashToken(token),
+    uid: user.uid,
+    client_id: user.client_id,
+    role: user.role,
+    created_at: new Date(),
+    expires_at: expiresAt,
+  });
+}
+
+router.post('/google', async (req, res) => {
+  try {
+    const { idToken, role } = req.body;
+    const clientId = typeof req.body.clientId === 'string' && req.body.clientId.trim() ? req.body.clientId.trim() : 'urban-tanker';
+    const apiKey = process.env.GOOGLE_WEB_API_KEY;
+    if (!apiKey || typeof idToken !== 'string') {
+      return res.status(400).json({ message: 'Google sign-in is not configured.' });
+    }
+
+    const verification = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken }),
+    });
+    if (!verification.ok) return res.status(401).json({ message: 'Google sign-in could not be verified.' });
+    const verified = await verification.json();
+    const googleUser = verified.users?.[0];
+    const email = typeof googleUser?.email === 'string' ? googleUser.email.toLowerCase() : '';
+    if (!email) return res.status(401).json({ message: 'Google did not return an email address.' });
+
+    let user = await usersCollection.findOne({ email, client_id: clientId });
+    if (!user) {
+      if (role && role !== 'customer') return res.status(403).json({ message: 'New Google accounts can only be created as customers.' });
+      const now = new Date();
+      user = {
+        _id: randomUUID(),
+        uid: randomUUID(),
+        email,
+        password_hash: await hashPassword(randomUUID()),
+        display_name: googleUser.displayName || email.split('@')[0],
+        phone_number: googleUser.phoneNumber || null,
+        role: 'customer',
+        email_verified: true,
+        phone_verified: false,
+        created_at: now,
+        updated_at: now,
+        last_login: now,
+        client_id: clientId,
+      };
+      await usersCollection.insertOne(user);
+    } else {
+      if (role && user.role !== role) return res.status(403).json({ message: `This account is registered as ${user.role}. Select the matching role.` });
+      await usersCollection.updateOne({ _id: user._id, client_id: clientId }, { $set: { last_login: new Date(), updated_at: new Date() } });
+    }
+
+    const token = generateToken(user);
+    await createSession(user, token);
+    return res.status(200).json({ message: 'Google sign-in successful', idToken: token, user: { uid: user.uid, email: user.email, displayName: user.display_name, phoneNumber: user.phone_number, role: user.role } });
+  } catch (error) {
+    console.error('Google sign-in error:', error);
+    return res.status(500).json({ message: 'Google sign-in failed.' });
+  }
+});
+
 /**
  * @route POST /api/auth/register
  * @desc Register a new user
@@ -53,10 +120,11 @@ router.post(
   async (req, res) => {
     try {
       const { email, password, displayName, phoneNumber, role = 'customer' } = req.body;
+      const clientId = typeof req.body.clientId === 'string' && req.body.clientId.trim() ? req.body.clientId.trim() : 'urban-tanker';
 
       // Check if user already exists
-      const existingUserSnapshot = await usersCollection.where('email', '==', email).limit(1).get();
-      if (!existingUserSnapshot.empty) {
+      const existingUser = await usersCollection.findOne({ email, client_id: clientId });
+      if (existingUser) {
         return res.status(409).json({ message: 'Email already registered' });
       }
 
@@ -64,8 +132,9 @@ router.post(
       const passwordHash = await hashPassword(password);
 
       // Create user document
-      const uid = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      const uid = randomUUID();
       const userData = {
+        _id: uid,
         uid,
         email,
         password_hash: passwordHash,
@@ -77,12 +146,14 @@ router.post(
         created_at: new Date(),
         updated_at: new Date(),
         last_login: null,
+        client_id: clientId,
       };
 
-      const userRef = await usersCollection.add(userData);
-      const user = { id: userRef.id, ...userData };
+      await usersCollection.insertOne(userData);
+      const user = userData;
 
       const token = generateToken(user);
+      await createSession(user, token);
 
       res.status(201).json({
         message: 'User registered successfully',
@@ -115,16 +186,18 @@ router.post(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { email, password } = req.body;
+      const { email, password, role } = req.body;
+      const clientId = typeof req.body.clientId === 'string' && req.body.clientId.trim() ? req.body.clientId.trim() : 'urban-tanker';
 
       // Find user by email
-      const userSnapshot = await usersCollection.where('email', '==', email).limit(1).get();
-      if (userSnapshot.empty) {
+      const user = await usersCollection.findOne({ email, client_id: clientId });
+      if (!user) {
         return res.status(401).json({ message: 'Invalid email or password' });
       }
 
-      const userDoc = userSnapshot.docs[0];
-      const user = { id: userDoc.id, ...userDoc.data() };
+      if (role && user.role !== role) {
+        return res.status(403).json({ message: `This account is registered as ${user.role}. Select the matching role.` });
+      }
 
       // Verify password
       const validPassword = await comparePassword(password, user.password_hash);
@@ -133,9 +206,10 @@ router.post(
       }
 
       // Update last login
-      await userDoc.ref.update({ last_login: new Date() });
+      await usersCollection.updateOne({ _id: user._id, client_id: clientId }, { $set: { last_login: new Date(), updated_at: new Date() } });
 
       const token = generateToken(user);
+      await createSession(user, token);
 
       res.json({
         message: 'Login successful',
@@ -161,13 +235,13 @@ router.post(
  */
 router.get('/me', authenticateToken, async (req, res) => {
   try {
-    const userDoc = await usersCollection.doc(req.user.id).get();
+    const userDoc = await usersCollection.findOne({ _id: req.user.id, client_id: req.user.clientId });
 
-    if (!userDoc.exists) {
+    if (!userDoc) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    const user = userDoc.data();
+    const user = userDoc;
     res.json({
       user: {
         uid: user.uid,
@@ -211,10 +285,10 @@ router.put(
         updateData.phone_number = phoneNumber;
       }
 
-      await usersCollection.doc(req.user.id).update(updateData);
+      await usersCollection.updateOne({ _id: req.user.id, client_id: req.user.clientId }, { $set: updateData });
 
-      const userDoc = await usersCollection.doc(req.user.id).get();
-      const user = userDoc.data();
+      const user = await usersCollection.findOne({ _id: req.user.id, client_id: req.user.clientId });
+      if (!user) return res.status(404).json({ message: 'User not found' });
 
       res.json({
         message: 'Profile updated successfully',
@@ -249,8 +323,8 @@ router.post(
     try {
       const { currentPassword, newPassword } = req.body;
 
-      const userDoc = await usersCollection.doc(req.user.id).get();
-      const user = userDoc.data();
+      const user = await usersCollection.findOne({ _id: req.user.id, client_id: req.user.clientId });
+      if (!user) return res.status(404).json({ message: 'User not found' });
 
       const validPassword = await comparePassword(currentPassword, user.password_hash);
       if (!validPassword) {
@@ -258,10 +332,10 @@ router.post(
       }
 
       const newPasswordHash = await hashPassword(newPassword);
-      await userDoc.ref.update({
+      await usersCollection.updateOne({ _id: req.user.id, client_id: req.user.clientId }, { $set: {
         password_hash: newPasswordHash,
         updated_at: new Date(),
-      });
+      } });
 
       res.json({ message: 'Password changed successfully' });
     } catch (error) {
@@ -276,8 +350,8 @@ router.post(
  * @desc Logout user (optional - for future session management)
  */
 router.post('/logout', authenticateToken, async (req, res) => {
-  // In a stateless JWT system, logout is handled on the client side
-  // This endpoint can be used for future features like token blacklisting
+  const token = req.headers.authorization.split(' ')[1];
+  await sessionsCollection.deleteOne({ token_hash: hashToken(token), client_id: req.user.clientId });
   res.json({ message: 'Logged out successfully' });
 });
 

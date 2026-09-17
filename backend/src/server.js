@@ -1,13 +1,19 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
-import { closeConnection } from './database/connection.js';
+import { closeConnection, contentCollection } from './database/connection.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const contentCache = new Map();
+const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_MS || 60000);
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors({
@@ -17,18 +23,39 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(compression());
+app.use(express.json({ limit: '64kb' }));
+app.use(express.urlencoded({ extended: true, limit: '64kb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path}`);
+  if (process.env.NODE_ENV !== 'production') console.log(`${req.method} ${req.path}`);
   next();
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/content/:clientId', async (req, res) => {
+  try {
+    const clientId = req.params.clientId;
+    const cached = contentCache.get(clientId);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(cached.value);
+    }
+    const document = await contentCollection.findOne({ client_id: clientId }, { projection: { _id: 0, config: 1, coupons: 1 } });
+    if (!document) return res.status(404).json({ message: 'Content configuration was not found.' });
+    const value = { ...document.config, coupons: document.coupons || [] };
+    contentCache.set(clientId, { value, expiresAt: Date.now() + contentCacheTtlMs });
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json(value);
+  } catch (error) {
+    console.error('Content lookup error:', error);
+    res.status(500).json({ message: 'Unable to load content configuration.' });
+  }
 });
 
 // API Routes
