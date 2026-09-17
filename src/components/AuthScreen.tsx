@@ -2,6 +2,8 @@ import { FormEvent, useRef, useState } from "react";
 import { ArrowRight, Droplets, ShieldCheck } from "lucide-react";
 import {
   registerWithPassword,
+  requestPasswordReset,
+  completePasswordReset,
   signInWithGoogle,
   signInWithPassword,
   signOutFirebaseUser,
@@ -36,6 +38,10 @@ export function AuthScreen() {
     update,
   } = useAppStore();
   const [registering, setRegistering] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get("resetToken") || "");
+  const [resetEmail, setResetEmail] = useState(() => new URLSearchParams(window.location.search).get("resetEmail") || email);
   const submitLock = useRef(false);
   const validatePhone = () => {
     const normalized = phone.replace(/\D/g, "");
@@ -169,7 +175,31 @@ export function AuthScreen() {
   };
   const toggleMode = () => {
     setRegistering((value) => !value);
+    setResetMode(false);
     setError("");
+  };
+  const handlePasswordReset = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (submitLock.current || busy) return;
+    submitLock.current = true;
+    setError("");
+    setBusy(true);
+    try {
+      const message = resetToken
+        ? await completePasswordReset(resetEmail.trim(), resetToken, resetPassword)
+        : await requestPasswordReset(resetEmail.trim());
+      setError(message);
+      if (resetToken) {
+        setResetMode(false);
+        setResetPassword("");
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to reset the password.");
+    } finally {
+      setBusy(false);
+      submitLock.current = false;
+    }
   };
   return (
     <main className="auth-page" aria-labelledby="auth-title">
@@ -338,6 +368,20 @@ export function AuthScreen() {
                   : `${content.signIn} ${content.roles[role]}`}
             </Button>
           </form>
+          {!registering && !resetMode && (
+            <button className="auth-mode-toggle" type="button" onClick={() => setResetMode(true)}>
+              Forgot password?
+            </button>
+          )}
+          {resetMode && (
+            <form className="auth-form reset-form" onSubmit={handlePasswordReset}>
+              <p className="modal-copy">{resetToken ? "Choose a new password." : "Enter your email and we will send a secure reset link."}</p>
+              <label htmlFor="reset-email">Email address<input id="reset-email" type="email" value={resetEmail} onChange={event => setResetEmail(event.target.value)} required /></label>
+              {resetToken && <label htmlFor="reset-password">New password<input id="reset-password" type="password" value={resetPassword} onChange={event => setResetPassword(event.target.value)} minLength={8} required /></label>}
+              <Button type="submit" variant="primary full" disabled={busy}>{busy ? "Sending..." : resetToken ? "Reset password" : "Send reset link"} <ArrowRight size={16} /></Button>
+              <button className="auth-mode-toggle" type="button" onClick={() => setResetMode(false)}>Back to sign in</button>
+            </form>
+          )}
           {error && (
             <p className="auth-error" role="alert">
               {error}

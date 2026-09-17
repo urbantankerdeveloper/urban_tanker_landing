@@ -125,6 +125,20 @@ async function databaseCredentialAuth(action: 'login' | 'register', email: strin
   return createFirebaseUser(result.user);
 }
 
+export async function requestPasswordReset(email: string): Promise<string> {
+  const response = await fetch(AUTH_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'request', clientId: contentClientId, email}) });
+  const payload = await response.json() as {message?: string};
+  if (!response.ok) throw new Error(payload.message || 'Unable to request a password reset.');
+  return payload.message || 'If the account exists, a reset link has been sent.';
+}
+
+export async function completePasswordReset(email: string, token: string, password: string): Promise<string> {
+  const response = await fetch(AUTH_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'complete', clientId: contentClientId, email, token, password}) });
+  const payload = await response.json() as {message?: string};
+  if (!response.ok) throw new Error(payload.message || 'Unable to reset the password.');
+  return payload.message || 'Password reset successfully.';
+}
+
 export async function signOutUser(): Promise<void> {
   const token = localStorage.getItem(TOKEN_KEY);
   

@@ -7,10 +7,10 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 
-import {getApps, initializeApp} from "firebase-admin/app";
+import {applicationDefault, getApps, initializeApp} from "firebase-admin/app";
 import {getAuth} from "firebase-admin/auth";
 import {getDatabase} from "firebase-admin/database";
-import {createHmac, randomBytes, scryptSync, timingSafeEqual} from "node:crypto";
+import {createHash, createHmac, randomBytes, scryptSync, timingSafeEqual} from "node:crypto";
 import type {Request} from "express";
 import {setGlobalOptions} from "firebase-functions";
 import {onRequest} from "firebase-functions/https";
@@ -31,7 +31,10 @@ import {onValueWritten} from "firebase-functions/v2/database";
 // this will be the maximum concurrent request count.
 setGlobalOptions({maxInstances: 10});
 
-if (!getApps().length) initializeApp();
+if (!getApps().length) {
+	const projectId = process.env.GCLOUD_PROJECT || 'urban-tanker-landing';
+	initializeApp({credential: applicationDefault(), databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${projectId}-default-rtdb.firebaseio.com`});
+}
 
 type NotificationOrder = {id?: string; service?: string; capacity?: string; address?: string; customer?: string; customerEmail?: string; vendor?: string; vendorEmail?: string; vendorPhone?: string; vendorLatitude?: number; vendorLongitude?: number; amount?: number; status?: string};
 
@@ -80,11 +83,15 @@ function verifyPassword(password: string, stored: string): boolean {
 	return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function hashResetToken(token: string): string {
+	return createHash('sha256').update(token).digest('hex');
+}
+
 function databaseUserPath(clientId: string, uid: string): string {
 	return `customers/${clientId}/users/${uid}`;
 }
 
-export const signInWithDatabaseCredentials = onRequest(async (request, response) => {
+export const signInWithDatabaseCredentials = onRequest({invoker: 'public'}, async (request, response) => {
 	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
 	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
@@ -122,6 +129,43 @@ export const signInWithDatabaseCredentials = onRequest(async (request, response)
 	}
 });
 
+export const resetDatabasePassword = onRequest({invoker: 'public'}, async (request, response) => {
+	setCorsHeaders(response, request);
+	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
+	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
+	try {
+		const body = request.body && typeof request.body === 'object' ? request.body as {action?: unknown; clientId?: unknown; email?: unknown; token?: unknown; password?: unknown} : {};
+		const action = body.action === 'complete' ? 'complete' : 'request';
+		const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+		const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+		const database = getDatabase();
+		const authUsersRef = database.ref(`customers/${clientId}/authUsers`);
+		const users = (await authUsersRef.get()).val() as Record<string, {email?: string; passwordHash?: string; resetTokenHash?: string; resetExpiresAt?: number}> | null;
+		const existing = Object.entries(users || {}).find(([, user]) => user.email === email);
+		if (action === 'request') {
+			if (clientId && email && existing) {
+				const token = randomBytes(32).toString('hex');
+				await authUsersRef.child(existing[0]).update({resetTokenHash: hashResetToken(token), resetExpiresAt: Date.now() + 15 * 60 * 1000});
+				const resetUrl = `https://urban-tanker-landing.web.app/?resetToken=${encodeURIComponent(token)}&resetEmail=${encodeURIComponent(email)}&resetClient=${encodeURIComponent(clientId)}`;
+				await sendOrderEmail(email, 'Reset your Urban Tanker password', `<h2>Reset your password</h2><p>This link expires in 15 minutes.</p><p><a href="${resetUrl}">Reset password</a></p>`);
+			}
+			response.status(200).json({message: 'If the account exists, a reset link has been sent.'});
+			return;
+		}
+		const token = typeof body.token === 'string' ? body.token : '';
+		const password = typeof body.password === 'string' ? body.password : '';
+		if (!existing || password.length < 8 || !token || existing[1].resetTokenHash !== hashResetToken(token) || Number(existing[1].resetExpiresAt || 0) < Date.now()) {
+			response.status(400).json({message: 'This password reset link is invalid or expired.'});
+			return;
+		}
+		await authUsersRef.child(existing[0]).update({passwordHash: hashPassword(password), resetTokenHash: null, resetExpiresAt: null});
+		response.status(200).json({message: 'Password reset successfully.'});
+	} catch (error) {
+		console.error('Password reset error:', error);
+		response.status(500).json({message: 'Unable to reset the password.'});
+	}
+});
+
 function setCorsHeaders(response: {set: (field: string, value: string) => unknown}, request?: Request): void {
 	const allowedOrigins = (process.env.ALLOWED_ORIGIN || 'https://urban-tanker-landing.web.app,http://localhost:5173,http://localhost:5174').split(',').map(origin => origin.trim());
 	const requestOrigin = request?.get('Origin');
@@ -141,6 +185,38 @@ async function verifyCaller(request: Request) {
 	if (!token) throw new Error('AUTH_REQUIRED');
 	return getAuth().verifyIdToken(token);
 }
+
+export const createUserWithRole = onRequest({invoker: 'public'}, async (request, response) => {
+	setCorsHeaders(response, request);
+	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
+	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
+	try {
+		const caller = await verifyCaller(request);
+		const body = request.body && typeof request.body === 'object' ? request.body as {clientId?: unknown; name?: unknown; email?: unknown; phone?: unknown; password?: unknown; role?: unknown} : {};
+		const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+		const name = typeof body.name === 'string' ? body.name.trim() : '';
+		const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+		const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
+		const password = typeof body.password === 'string' ? body.password : '';
+		const role = body.role === 'customer' || body.role === 'vendor' || body.role === 'admin' ? body.role : '';
+		if (caller.clientId !== clientId || caller.role !== 'admin') { response.status(403).json({message: 'Only an administrator from this client can create users.'}); return; }
+		if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || !role) { response.status(400).json({message: 'Name, valid email, role, and a password of at least 8 characters are required.'}); return; }
+		const database = getDatabase();
+		const authUsersRef = database.ref(`customers/${clientId}/authUsers`);
+		const snapshot = await authUsersRef.get();
+		const users = snapshot.val() as Record<string, {email?: string}> | null;
+		if (Object.values(users || {}).some(user => user.email === email)) { response.status(409).json({message: 'That email address is already registered for this client.'}); return; }
+		const uid = authUsersRef.push().key!;
+		const now = Date.now();
+		const user = {email, passwordHash: hashPassword(password), role, name, phone, clientId, createdAt: now};
+		await database.ref(databaseUserPath(clientId, uid)).set({auth: user, profile: {name, email, phone, role, clientId, createdAt: now, updatedAt: now}});
+		if (role === 'vendor') await database.ref(`customers/${clientId}/operations/vendors/${uid}`).set({uid, name, email, phone, status: 'Online', available: true, updatedAt: now});
+		response.status(201).json({uid, clientId, name, email, phone, role});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : '';
+		response.status(message === 'AUTH_REQUIRED' ? 401 : 500).json({message: message === 'AUTH_REQUIRED' ? 'A Firebase ID token is required.' : 'Unable to create the user.'});
+	}
+});
 
 export const updateUserSignIn = onRequest(async (request, response) => {
 	setCorsHeaders(response, request);
