@@ -1,4 +1,4 @@
-import { get, onValue, ref, set, type Unsubscribe } from 'firebase/database';
+import { get, onValue, ref, set, update, type Unsubscribe } from 'firebase/database';
 import { firebaseAuth, firebaseEnabled, realtimeDatabase } from './firebase';
 import type { AppData, Profile, Role, Vendor } from './types';
 
@@ -70,6 +70,18 @@ export async function subscribeToOperations(onOperations: (operations: Pick<AppD
     const value = snapshot.val() as { orders?: AppData['orders']; vendors?: Record<string, Vendor> } | null;
     onOperations({ orders: Object.values(value?.orders || {}), vendors: Object.values(value?.vendors || {}) });
   }, onError);
+}
+
+export async function getVendorAvailability(): Promise<boolean> {
+  if (!firebaseAuth?.currentUser || !realtimeDatabase) return false;
+  const snapshot = await get(ref(realtimeDatabase, `customers/${contentClientId}/operations/vendors/${firebaseAuth.currentUser.uid}`));
+  const vendor = snapshot.val() as {available?: boolean; status?: string} | null;
+  return vendor?.available ?? vendor?.status === 'Online';
+}
+
+export async function setVendorAvailability(available: boolean): Promise<void> {
+  if (!firebaseAuth?.currentUser || !realtimeDatabase) throw new Error('Firebase Realtime Database is not configured.');
+  await update(ref(realtimeDatabase, `customers/${contentClientId}/operations/vendors/${firebaseAuth.currentUser.uid}`), {available, status: available ? 'Online' : 'Unavailable', updatedAt: Date.now()});
 }
 
 export async function createUserProfile(profile: Profile, role: Role): Promise<void> {

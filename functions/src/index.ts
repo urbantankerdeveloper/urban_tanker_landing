@@ -14,6 +14,7 @@ import {createHmac, randomBytes, scryptSync, timingSafeEqual} from "node:crypto"
 import type {Request} from "express";
 import {setGlobalOptions} from "firebase-functions";
 import {onRequest} from "firebase-functions/https";
+import {onValueWritten} from "firebase-functions/v2/database";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -31,6 +32,41 @@ import {onRequest} from "firebase-functions/https";
 setGlobalOptions({maxInstances: 10});
 
 if (!getApps().length) initializeApp();
+
+type NotificationOrder = {id?: string; service?: string; capacity?: string; address?: string; customer?: string; customerEmail?: string; vendor?: string; vendorEmail?: string; vendorPhone?: string; vendorLatitude?: number; vendorLongitude?: number; amount?: number; status?: string};
+
+async function sendOrderEmail(to: string | undefined, subject: string, html: string): Promise<void> {
+	const apiKey = process.env.RESEND_API_KEY;
+	const from = process.env.MAIL_FROM;
+	if (!apiKey || !from || !to) {
+		console.warn('Order email skipped: configure RESEND_API_KEY, MAIL_FROM, and a recipient.');
+		return;
+	}
+	const response = await fetch('https://api.resend.com/emails', {
+		method: 'POST',
+		headers: {Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json'},
+		body: JSON.stringify({from, to: [to], subject, html})
+	});
+	if (!response.ok) throw new Error(`Email provider returned ${response.status}.`);
+}
+
+export const notifyOrderEmail = onValueWritten('customers/{customerId}/operations/orders/{orderId}', async event => {
+	const before = event.data.before.val() as NotificationOrder | null;
+	const after = event.data.after.val() as NotificationOrder | null;
+	if (!after) return;
+	const orderId = after.id || event.params.orderId;
+	const details = `<p><strong>Service:</strong> ${after.service || 'Tanker service'}</p><p><strong>Capacity:</strong> ${after.capacity || '—'}</p><p><strong>Delivery:</strong> ${after.address || '—'}</p><p><strong>Amount:</strong> ₹${Number(after.amount || 0).toLocaleString('en-IN')}</p>`;
+	if (!before) {
+		await sendOrderEmail(after.customerEmail, `Urban Tanker booking confirmed · ${orderId}`, `<h2>Booking confirmed</h2><p>Hello ${after.customer || 'customer'},</p>${details}<p>We will notify you when a vendor accepts the booking.</p>`);
+		return;
+	}
+	if (before.status !== 'Vendor accepted' && after.status === 'Vendor accepted') {
+		const vendorLocation = typeof after.vendorLatitude === 'number' && typeof after.vendorLongitude === 'number' ? `${after.vendorLatitude},${after.vendorLongitude}` : '';
+		const trackingLink = vendorLocation ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(vendorLocation)}&destination=${encodeURIComponent(after.address || '')}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(after.address || '')}`;
+		const contact = `<p><strong>Vendor:</strong> ${after.vendor || 'Assigned vendor'}${after.vendorPhone ? ` · <a href="tel:${after.vendorPhone}">${after.vendorPhone}</a>` : ''}</p><p><a href="${trackingLink}">Track vendor route to your location</a></p>`;
+		await sendOrderEmail(after.customerEmail, `Vendor accepted your booking · ${orderId}`, `<h2>Your vendor accepted the booking</h2><p>Hello ${after.customer || 'customer'},</p>${details}${contact}<p>The vendor has accepted your booking and the tracking link shows the current route to your delivery location.</p>`);
+	}
+});
 
 function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
 	return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;

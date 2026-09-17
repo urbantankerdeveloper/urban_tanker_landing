@@ -1,6 +1,6 @@
 export type Role = 'customer' | 'vendor' | 'admin';
 export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support';
-export type OrderStatus = 'Vendor assigned' | 'En route' | 'Arrived' | 'Delivered';
+export type OrderStatus = 'Vendor assigned' | 'Vendor accepted' | 'En route' | 'Arrived' | 'Delivered';
 
 export interface Profile {
   name: string;
@@ -45,6 +45,11 @@ export interface Order {
   discount?: number;
   ownerUid?: string;
   assignedVendorUid?: string;
+  customerEmail?: string;
+  vendorEmail?: string;
+  vendorPhone?: string;
+  vendorLatitude?: number;
+  vendorLongitude?: number;
 }
 
 export interface Vendor {

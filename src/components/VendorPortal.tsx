@@ -11,9 +11,12 @@ import type { AppData, Order, OrderStatus } from "../types";
 import { Button, PageHeader, StatCard, Status } from "./ui";
 import { money } from "../data/demo";
 import { useAppStore } from "../store";
+import { getVendorAvailability, setVendorAvailability } from "../cloudStore";
+import { useEffect, useState } from "react";
 
 const stages: OrderStatus[] = [
     "Vendor assigned",
+    "Vendor accepted",
     "En route",
     "Arrived",
     "Delivered",
@@ -33,16 +36,47 @@ export function VendorPortal() {
         updateOrder: onUpdate,
         notify: onNotify,
     } = useAppStore();
+    const [available, setAvailable] = useState(true);
+    const [availabilityBusy, setAvailabilityBusy] = useState(false);
+    useEffect(() => {
+        getVendorAvailability().then(setAvailable).catch(() => undefined);
+    }, []);
+    const toggleAvailability = async () => {
+        if (availabilityBusy) return;
+        const next = !available;
+        setAvailabilityBusy(true);
+        try {
+            await setVendorAvailability(next);
+            setAvailable(next);
+            onNotify(next ? "You are now available for new service bookings." : "You are unavailable for new service bookings.");
+        } catch {
+            onNotify("Unable to update your service availability.");
+        } finally {
+            setAvailabilityBusy(false);
+        }
+    };
     const order = vendorOrder(data);
     const index = stages.indexOf(stage);
-    const advance = () => {
+    const readCurrentLocation = () => new Promise<{ latitude?: number; longitude?: number }>((resolve) => {
+        if (!navigator.geolocation) { resolve({}); return; }
+        navigator.geolocation.getCurrentPosition(
+            position => resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude }),
+            () => resolve({}),
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+        );
+    });
+    const advance = async () => {
         const next = stages[Math.min(index + 1, stages.length - 1)];
         setStage(next);
+        const location = next === "Vendor accepted" ? await readCurrentLocation() : {};
         if (order)
             onUpdate({
                 ...order,
                 status: next,
                 eta: next === "Delivered" ? "Delivered" : order.eta,
+                vendorPhone: data.profile?.phone,
+                vendorLatitude: location.latitude,
+                vendorLongitude: location.longitude,
             });
         onNotify(
             next === "Delivered"
@@ -57,15 +91,12 @@ export function VendorPortal() {
                 title="Keep every delivery moving."
                 copy="Accept new bookings quickly, keep the customer updated, and complete delivery with their OTP."
                 action={
-                    <Button
-                        variant="primary"
-                        icon={Navigation}
-                        onClick={() =>
-                            onNotify("Live location sharing enabled for this active job")
-                        }
-                    >
-                        Share location
-                    </Button>
+                    <div className="heading-actions">
+                        <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy}>
+                            {availabilityBusy ? "Updating..." : available ? "Available for bookings" : "Unavailable for bookings"}
+                        </Button>
+                        <Button variant="quiet" icon={Navigation} onClick={() => onNotify("Live location sharing enabled for this active job")}>Share location</Button>
+                    </div>
                 }
             />
             <section
@@ -138,7 +169,7 @@ export function VendorPortal() {
                                 <Button
                                     variant="primary"
                                     icon={stage === "Arrived" ? ShieldCheck : Navigation}
-                                    onClick={advance}
+                                    onClick={() => void advance()}
                                 >
                                     {stage === "Arrived"
                                         ? "Complete with OTP"

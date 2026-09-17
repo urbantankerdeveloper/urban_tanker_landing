@@ -80,6 +80,7 @@ export function CheckoutModal() {
       capacity: details.capacity,
       address: details.address,
       customer: data.profile?.name || "Urban Tanker customer",
+      customerEmail: data.profile?.email,
       amount,
       discount,
       couponCode: appliedCoupon?.code,
