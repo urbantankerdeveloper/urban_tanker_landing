@@ -7,7 +7,7 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 
-import {applicationDefault, getApps, initializeApp} from "firebase-admin/app";
+import {getApps, initializeApp} from "firebase-admin/app";
 import {getAuth} from "firebase-admin/auth";
 import {getDatabase} from "firebase-admin/database";
 import {createHash, createHmac, randomBytes, scryptSync, timingSafeEqual} from "node:crypto";
@@ -33,7 +33,7 @@ setGlobalOptions({maxInstances: 10});
 
 if (!getApps().length) {
 	const projectId = process.env.GCLOUD_PROJECT || 'urban-tanker-landing';
-	initializeApp({credential: applicationDefault(), databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${projectId}-default-rtdb.firebaseio.com`});
+	initializeApp({databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${projectId}-default-rtdb.firebaseio.com`});
 }
 
 type NotificationOrder = {id?: string; service?: string; capacity?: string; address?: string; customer?: string; customerEmail?: string; vendor?: string; vendorEmail?: string; vendorPhone?: string; vendorLatitude?: number; vendorLongitude?: number; amount?: number; status?: string};
@@ -91,7 +91,7 @@ function databaseUserPath(clientId: string, uid: string): string {
 	return `customers/${clientId}/users/${uid}`;
 }
 
-export const signInWithDatabaseCredentials = onRequest({invoker: 'public'}, async (request, response) => {
+export const signInWithDatabaseCredentials = onRequest(async (request, response) => {
 	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
 	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
@@ -113,7 +113,8 @@ export const signInWithDatabaseCredentials = onRequest({invoker: 'public'}, asyn
 			const name = typeof body.displayName === 'string' && body.displayName.trim() ? body.displayName.trim() : email.split('@')[0];
 			const phone = typeof body.phone === 'string' ? body.phone : '';
 			const user = {email, passwordHash: hashPassword(password), role: 'customer', name, phone, clientId, createdAt: Date.now()};
-			await database.ref(databaseUserPath(clientId, uid)).set({auth: user, profile: {name, email, phone, role: 'customer', clientId, createdAt: user.createdAt, updatedAt: user.createdAt}});
+			await database.ref(`customers/${clientId}/authUsers/${uid}`).set(user);
+			await database.ref(`${databaseUserPath(clientId, uid)}/profile`).set({name, email, phone, role: 'customer', clientId, createdAt: user.createdAt, updatedAt: user.createdAt});
 			const customToken = await getAuth().createCustomToken(uid, {role: 'customer', clientId});
 			response.status(201).json({customToken, user: {uid, email, displayName: name, phoneNumber: phone, role: 'customer'}});
 			return;
@@ -129,7 +130,7 @@ export const signInWithDatabaseCredentials = onRequest({invoker: 'public'}, asyn
 	}
 });
 
-export const registerWithDatabaseCredentials = onRequest({invoker: 'public'}, async (request, response) => {
+export const registerWithDatabaseCredentials = onRequest(async (request, response) => {
 	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
 	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
@@ -148,7 +149,8 @@ export const registerWithDatabaseCredentials = onRequest({invoker: 'public'}, as
 		const phone = typeof body.phone === 'string' ? body.phone : '';
 		const now = Date.now();
 		const user = {email, passwordHash: hashPassword(password), role: 'customer', name, phone, clientId, createdAt: now};
-		await database.ref(databaseUserPath(clientId, uid)).set({auth: user, profile: {name, email, phone, role: 'customer', clientId, createdAt: now, updatedAt: now}});
+		await database.ref(`customers/${clientId}/authUsers/${uid}`).set(user);
+		await database.ref(`${databaseUserPath(clientId, uid)}/profile`).set({name, email, phone, role: 'customer', clientId, createdAt: now, updatedAt: now});
 		const customToken = await getAuth().createCustomToken(uid, {role: 'customer', clientId});
 		response.status(201).json({customToken, user: {uid, email, displayName: name, phoneNumber: phone, role: 'customer'}});
 	} catch (error) {
@@ -157,7 +159,7 @@ export const registerWithDatabaseCredentials = onRequest({invoker: 'public'}, as
 	}
 });
 
-export const resetDatabasePassword = onRequest({invoker: 'public'}, async (request, response) => {
+export const resetDatabasePassword = onRequest(async (request, response) => {
 	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
 	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
@@ -214,7 +216,7 @@ async function verifyCaller(request: Request) {
 	return getAuth().verifyIdToken(token);
 }
 
-export const createUserWithRole = onRequest({invoker: 'public'}, async (request, response) => {
+export const createUserWithRole = onRequest(async (request, response) => {
 	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
 	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
@@ -237,7 +239,8 @@ export const createUserWithRole = onRequest({invoker: 'public'}, async (request,
 		const uid = authUsersRef.push().key!;
 		const now = Date.now();
 		const user = {email, passwordHash: hashPassword(password), role, name, phone, clientId, createdAt: now};
-		await database.ref(databaseUserPath(clientId, uid)).set({auth: user, profile: {name, email, phone, role, clientId, createdAt: now, updatedAt: now}});
+		await database.ref(`customers/${clientId}/authUsers/${uid}`).set(user);
+		await database.ref(`${databaseUserPath(clientId, uid)}/profile`).set({name, email, phone, role, clientId, createdAt: now, updatedAt: now});
 		if (role === 'vendor') await database.ref(`customers/${clientId}/operations/vendors/${uid}`).set({uid, name, email, phone, status: 'Online', available: true, updatedAt: now});
 		response.status(201).json({uid, clientId, name, email, phone, role});
 	} catch (error) {
