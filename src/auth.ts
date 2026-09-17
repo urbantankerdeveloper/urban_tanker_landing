@@ -35,6 +35,7 @@ const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
 const AUTH_FUNCTION_URL = import.meta.env.VITE_AUTH_FUNCTION_URL || 'https://us-central1-urban-tanker-landing.cloudfunctions.net/signInWithDatabaseCredentials';
+const REGISTER_FUNCTION_URL = import.meta.env.VITE_REGISTER_FUNCTION_URL || 'https://us-central1-urban-tanker-landing.cloudfunctions.net/registerWithDatabaseCredentials';
 
 function createUserObject(data: AuthResponse['user'], token: string): LocalUser {
   return {
@@ -115,7 +116,7 @@ async function databaseCredentialAuth(action: 'login' | 'register', email: strin
   if (!firebaseAuth) throw new Error('Firebase is not configured.');
   let response: Response;
   try {
-    response = await fetch(AUTH_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action, clientId: contentClientId, email, password, displayName, role }) });
+    response = await fetch(action === 'register' ? REGISTER_FUNCTION_URL : AUTH_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action, clientId: contentClientId, email, password, displayName, role }) });
   } catch {
     throw new Error('The database authentication service is unavailable. Deploy the Firebase auth function before signing in.');
   }

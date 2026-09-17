@@ -129,6 +129,34 @@ export const signInWithDatabaseCredentials = onRequest({invoker: 'public'}, asyn
 	}
 });
 
+export const registerWithDatabaseCredentials = onRequest({invoker: 'public'}, async (request, response) => {
+	setCorsHeaders(response, request);
+	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
+	if (request.method !== 'POST') { response.status(405).json({message: 'Only POST requests are supported.'}); return; }
+	try {
+		const body = request.body && typeof request.body === 'object' ? request.body as {clientId?: unknown; email?: unknown; password?: unknown; displayName?: unknown; phone?: unknown; role?: unknown} : {};
+		const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+		const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+		const password = typeof body.password === 'string' ? body.password : '';
+		if (!clientId || !email || password.length < 8 || body.role !== 'customer') { response.status(400).json({message: 'Client ID, customer role, email, and a password of at least 8 characters are required.'}); return; }
+		const database = getDatabase();
+		const authUsersRef = database.ref(`customers/${clientId}/authUsers`);
+		const users = (await authUsersRef.get()).val() as Record<string, {email?: string}> | null;
+		if (Object.values(users || {}).some(user => user.email === email)) { response.status(409).json({message: 'That email address is already registered.'}); return; }
+		const uid = authUsersRef.push().key!;
+		const name = typeof body.displayName === 'string' && body.displayName.trim() ? body.displayName.trim() : email.split('@')[0];
+		const phone = typeof body.phone === 'string' ? body.phone : '';
+		const now = Date.now();
+		const user = {email, passwordHash: hashPassword(password), role: 'customer', name, phone, clientId, createdAt: now};
+		await database.ref(databaseUserPath(clientId, uid)).set({auth: user, profile: {name, email, phone, role: 'customer', clientId, createdAt: now, updatedAt: now}});
+		const customToken = await getAuth().createCustomToken(uid, {role: 'customer', clientId});
+		response.status(201).json({customToken, user: {uid, email, displayName: name, phoneNumber: phone, role: 'customer'}});
+	} catch (error) {
+		console.error('Database registration error:', error);
+		response.status(500).json({message: 'Unable to register with the client database.'});
+	}
+});
+
 export const resetDatabasePassword = onRequest({invoker: 'public'}, async (request, response) => {
 	setCorsHeaders(response, request);
 	if (request.method === 'OPTIONS') { response.status(204).send(''); return; }
