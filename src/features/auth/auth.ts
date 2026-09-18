@@ -2,6 +2,7 @@
 // Uses backend API for user management
 
 import { contentClientId } from '../../shared/lib/cloudStore';
+import { API_BASE_URL } from '../../shared/lib/apiConfig';
 import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { googleAuth } from './firebaseAuth';
 
@@ -31,7 +32,7 @@ interface AuthResponse {
 let currentUser: LocalUser | null = null;
 const authStateCallbacks: ((user: LocalUser | null) => void)[] = [];
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_URL = API_BASE_URL;
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
 const RESET_FUNCTION_URL = import.meta.env.VITE_RESET_FUNCTION_URL || 'https://us-central1-urban-tanker-landing.cloudfunctions.net/resetDatabasePassword';

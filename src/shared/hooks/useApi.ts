@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import { getAuthToken } from '../../features/auth/auth';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+import { API_BASE_URL } from '../lib/apiConfig';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 type RequestBody = BodyInit | Record<string, unknown> | null | undefined;
