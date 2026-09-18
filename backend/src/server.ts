@@ -61,7 +61,11 @@ app.set('trust proxy', 1);
 // }));
 
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: (requestOrigin, callback) => {
+    const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,https://urban-tanker-landing.web.app').split(',').map(origin => origin.trim());
+    if (!requestOrigin || allowedOrigins.includes(requestOrigin)) return callback(null, true);
+    return callback(new Error('Origin is not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Id']
@@ -193,7 +197,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     if (!order.id || !order.service || !order.status) return res.status(400).json({ message: 'Order details are incomplete.' });
     const deliveryOtp = typeof order.deliveryOtp === 'string' ? order.deliveryOtp : '';
     delete order.deliveryOtp;
-    if (deliveryOtp) delete order.deliveryOtp;
+    if (deliveryOtp) order.deliveryOtpHash = createHash('sha256').update(deliveryOtp).digest('hex');
     order.client_id = req.user.clientId;
     order.owner_uid = req.user.uid;
     order.updated_at = new Date();

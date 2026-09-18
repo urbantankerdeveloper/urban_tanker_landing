@@ -49,7 +49,7 @@ export function App() {
       const cachedData = cached.value || useAppStore.getState().data;
       const userProfile = await getUserProfile();
       const profile = userProfile || cachedData.profile;
-      useAppStore.setState({ data: { ...cachedData, profile: { name: user.displayName || profile?.name || user.email?.split('@')[0] || 'Urban Tanker user', email: user.email || profile?.email || '', phone: user.phoneNumber || profile?.phone || '' }, role: userProfile?.role || cachedData.role || user.role }, bookingDraft: cachedData.booking });
+      useAppStore.setState({ data: { ...cachedData, profile: { name: user.displayName || profile?.name || user.email?.split('@')[0] || 'Urban Tanker user', email: user.email || profile?.email || '', phone: user.phoneNumber || profile?.phone || '' }, role: userProfile?.role || user.role }, bookingDraft: cachedData.booking });
       subscribeToCloudState(cloudState => hydrateCloudState(cloudState), () => notify('Saved state is unavailable. Continuing with cached data.'))
         .then(stop => { unsubscribeCloud = stop; })
         .catch(() => notify('Unable to sync saved state.'));
