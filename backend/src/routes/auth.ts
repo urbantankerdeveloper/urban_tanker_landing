@@ -86,6 +86,7 @@ router.post('/google', async (req, res) => {
         updated_at: now,
         last_login: now,
         client_id: clientId,
+        ...(role === 'vendor' ? { status: 'inactive', available: false } : {}),
       };
       await usersCollection.insertOne(user);
       if (user.role === 'vendor') {
@@ -153,6 +154,7 @@ router.post(
         updated_at: new Date(),
         last_login: null,
         client_id: clientId,
+        ...(role === 'vendor' ? { status: 'inactive', available: false } : {}),
       };
 
       await usersCollection.insertOne(userData);
@@ -288,7 +290,7 @@ router.put(
     try {
       const { displayName, phoneNumber } = req.body;
 
-      const updateData = { updated_at: new Date() };
+      const updateData: Record<string, any> = { updated_at: new Date() };
 
       if (displayName) {
         updateData.display_name = displayName;

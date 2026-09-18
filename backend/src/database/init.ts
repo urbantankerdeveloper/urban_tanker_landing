@@ -11,6 +11,8 @@ const collections = {
         email: { bsonType: 'string' },
         password_hash: { bsonType: 'string' },
         role: { enum: ['customer', 'vendor', 'admin'] },
+        status: { enum: ['active', 'inactive'] },
+        available: { bsonType: 'bool' },
         display_name: { bsonType: 'string' },
         phone_number: { bsonType: ['string', 'null'] },
         created_at: { bsonType: 'date' },
@@ -32,6 +34,23 @@ const collections = {
       },
     },
   },
+  vehicles: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'vendor_uid', 'registration_number', 'vehicle_type', 'active', 'updated_at'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        vendor_uid: { bsonType: 'string' },
+        registration_number: { bsonType: 'string' },
+        vehicle_type: { bsonType: 'string' },
+        capacity: { bsonType: 'string' },
+        active: { bsonType: 'bool' },
+        image_url: { bsonType: 'string' },
+        updated_at: { bsonType: 'date' },
+      },
+    },
+  },
   orders: {
     $jsonSchema: {
       bsonType: 'object',
@@ -46,6 +65,7 @@ const collections = {
         status: { enum: ['Created', 'Pending acceptance', 'Accepted', 'En route', 'Arrived', 'Delivered', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected'] },
         vendorDecision: { enum: ['pending', 'accepted', 'rejected'] },
         deliveryOtpHash: { bsonType: 'string' },
+        customerDeliveryOtp: { bsonType: 'string' },
         otpVerifiedAt: { bsonType: 'date' },
         statusHistory: { bsonType: 'array' },
         created: { bsonType: ['date', 'string'] },
@@ -131,9 +151,12 @@ const initDatabase = async () => {
     await db.collection('vendors').createIndex({ client_id: 1, uid: 1 }, { unique: true, name: 'client_vendor_unique' });
     await db.collection('vendors').createIndex({ client_id: 1, available: 1 }, { name: 'available_vendors' });
     await db.collection('vendors').createIndex({ client_id: 1, status: 1 }, { name: 'vendor_status' });
+    await db.collection('vehicles').createIndex({ client_id: 1, vendor_uid: 1, active: 1 }, { name: 'vendor_vehicles' });
+    await db.collection('vehicles').createIndex({ client_id: 1, registration_number: 1 }, { unique: true, name: 'vehicle_registration_unique' });
     await db.collection('vendors').updateMany({ status: 'Online' }, { $set: { status: 'active' } });
     await db.collection('vendors').updateMany({ status: 'Unavailable' }, { $set: { status: 'inactive' } });
     await db.collection('vendors').updateMany({ status: { $exists: false } }, { $set: { status: 'inactive', available: false, updated_at: new Date() } });
+    await db.collection('users').updateMany({ client_id: { $exists: true }, role: 'vendor', status: { $exists: false } }, { $set: { status: 'inactive', available: false, updated_at: new Date() } });
     await db.collection('content').createIndex({ client_id: 1 }, { unique: true, name: 'client_content_unique' });
     await db.collection('content').updateOne(
       { client_id: 'urban-tanker' },

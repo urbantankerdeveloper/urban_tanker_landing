@@ -28,11 +28,12 @@ export async function getDatabase() {
   return databasePromise;
 }
 
-export const usersCollection = (await databasePromise).collection('users');
-export const sessionsCollection = (await databasePromise).collection('sessions');
-export const ordersCollection = (await databasePromise).collection('orders');
-export const vendorsCollection = (await databasePromise).collection('vendors');
-export const contentCollection = (await databasePromise).collection('content');
+export const usersCollection = (await databasePromise).collection<any>('users');
+export const sessionsCollection = (await databasePromise).collection<any>('sessions');
+export const ordersCollection = (await databasePromise).collection<any>('orders');
+export const vendorsCollection = (await databasePromise).collection<any>('vendors');
+export const vehiclesCollection = (await databasePromise).collection<any>('vehicles');
+export const contentCollection = (await databasePromise).collection<any>('content');
 
 export async function closeConnection() {
   await client.close();

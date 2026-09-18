@@ -33,6 +33,7 @@
     "eslint": "latest",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",
+    "globals": "^16.4.0",
     "sass": "latest",
     "typescript": "latest",
     "concurrently": "^9.2.1",

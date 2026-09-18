@@ -23,7 +23,7 @@ export function generateToken(user) {
       phoneNumber: user.phone_number,
     },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRE || '7d' }
+    { expiresIn: (process.env.JWT_EXPIRE || '7d') as any }
   );
 }
 

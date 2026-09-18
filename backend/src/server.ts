@@ -1,0 +1,456 @@
+import express from 'express';
+import cors from 'cors';
+import compression from 'compression';
+import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
+import dotenv from 'dotenv';
+import authRoutes from './routes/auth.js';
+import { closeConnection, contentCollection, ordersCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import { authenticateToken } from './middleware/auth.js';
+import Razorpay from 'razorpay';
+
+dotenv.config();
+
+const app = express();
+const PORT = Number(process.env.PORT || 5000);
+const contentCache = new Map();
+const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_MS || 60000);
+const vendorDispatchRadiusKm = Number(process.env.VENDOR_DISPATCH_RADIUS_KM || 25);
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID as string,
+  key_secret: process.env.RAZORPAY_KEY_SECRET as string,
+});
+
+async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: Record<string, any>): Promise<void> {
+  const message = `Urban Tanker update: your order ${order.id} was accepted by ${order.vendor || 'your vendor'}. Vehicle: ${vehicle.registration_number} (${vehicle.vehicle_type}). Delivery OTP: ${order.customerDeliveryOtp}. Share this OTP only after delivery.`;
+  const emailKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.MAIL_FROM;
+  if (emailKey && emailFrom && order.customerEmail) {
+    await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${emailKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: emailFrom, to: [order.customerEmail], subject: `Order ${order.id} accepted`, html: `<p>${message}</p><p>Vehicle: <strong>${vehicle.registration_number}</strong> · ${vehicle.vehicle_type}</p>` }) });
+  }
+  const smsSid = process.env.TWILIO_ACCOUNT_SID;
+  const smsToken = process.env.TWILIO_AUTH_TOKEN;
+  const smsFrom = process.env.TWILIO_FROM_NUMBER;
+  if (smsSid && smsToken && smsFrom && order.customerPhone) {
+    const auth = Buffer.from(`${smsSid}:${smsToken}`).toString('base64');
+    const body = new URLSearchParams({ To: order.customerPhone, From: smsFrom, Body: message });
+    await fetch(`https://api.twilio.com/2010-04-01/Accounts/${smsSid}/Messages.json`, { method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  }
+}
+
+function distanceKm(firstLatitude, firstLongitude, secondLatitude, secondLongitude) {
+  const radians = value => value * Math.PI / 180;
+  const deltaLatitude = radians(secondLatitude - firstLatitude);
+  const deltaLongitude = radians(secondLongitude - firstLongitude);
+  const value = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(firstLatitude)) * Math.cos(radians(secondLatitude)) * Math.sin(deltaLongitude / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+// Middleware
+// app.use(cors({
+//   origin: (requestOrigin, callback) => {
+//     const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://192.168.1.43:5173,https://urban-tanker-landing.web.app').split(',').map(origin => origin.trim());
+//     if (!requestOrigin || allowedOrigins.includes(requestOrigin)) return callback(null, true);
+//     return callback(new Error('Origin is not allowed by CORS'));
+//   },
+//   credentials: true,
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Id']
+// }));
+
+app.use(cors({
+  origin: 'http://localhost:5173',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Id']
+}));
+
+app.use(compression());
+app.use(express.json({ limit: '64kb' }));
+app.use(express.urlencoded({ extended: true, limit: '64kb' }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV !== 'production') console.log(`${req.method} ${req.path}`);
+  next();
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/content/:clientId', async (req, res) => {
+  try {
+    const clientId = req.params.clientId;
+    const cached = contentCache.get(clientId);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(cached.value);
+    }
+    const document = await contentCollection.findOne({ client_id: clientId }, { projection: { _id: 0, config: 1, coupons: 1 } });
+    if (!document) return res.status(404).json({ message: 'Content configuration was not found.' });
+    const value = { ...document.config, coupons: document.coupons || [] };
+    contentCache.set(clientId, { value, expiresAt: Date.now() + contentCacheTtlMs });
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json(value);
+  } catch (error) {
+    console.error('Content lookup error:', error);
+    res.status(500).json({ message: 'Unable to load content configuration.' });
+  }
+});
+
+app.get('/api/vendor/dashboard', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+    const vendor = await vendorsCollection.findOne({ uid: req.user.uid, client_id: req.user.clientId }, { projection: { _id: 0 } });
+    const orders = await ordersCollection.find({ client_id: req.user.clientId, status: { $nin: ['Rejected', 'Vendor rejected'] }, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(25).toArray();
+    const visibleOrders = orders.filter(order => order.assigned_vendor_uid === req.user.uid || (vendor?.status === 'active' && (typeof vendor?.latitude !== 'number' || typeof vendor?.longitude !== 'number' || typeof order.deliveryLatitude !== 'number' || typeof order.deliveryLongitude !== 'number' || distanceKm(vendor.latitude, vendor.longitude, order.deliveryLatitude, order.deliveryLongitude) <= vendorDispatchRadiusKm)));
+    const vehicles = await vehiclesCollection.find({ client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray();
+    res.set('Cache-Control', 'no-store');
+    res.json({ vendor, vehicles, orders: visibleOrders });
+  } catch (error) {
+    console.error('Vendor dashboard error:', error);
+    res.status(500).json({ message: 'Unable to load vendor data.' });
+  }
+});
+
+app.get('/api/vendor/vehicles', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const vehicles = await vehiclesCollection.find({ client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray();
+  res.json({ vehicles });
+});
+
+app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+    const registrationNumber = String(req.body.registrationNumber || '').trim().toUpperCase();
+    const vehicleType = String(req.body.vehicleType || '').trim();
+    const capacity = String(req.body.capacity || '').trim();
+    if (!registrationNumber || !vehicleType) return res.status(400).json({ message: 'Registration number and vehicle type are required.' });
+    const imageUrl = typeof req.body.imageUrl === 'string' && req.body.imageUrl.length <= 2_000_000 ? req.body.imageUrl : '';
+    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, active: false, updated_at: new Date() };
+    await vehiclesCollection.insertOne(vehicle);
+    res.status(201).json({ vehicle });
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 11000) return res.status(409).json({ message: 'That vehicle registration is already registered.' });
+    res.status(500).json({ message: 'Unable to create vehicle.' });
+  }
+});
+
+app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const active = Boolean(req.body.active);
+  const result = await vehiclesCollection.updateOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: { active, updated_at: new Date() } });
+  if (!result.matchedCount) return res.status(404).json({ message: 'Vehicle was not found.' });
+  res.json({ id: req.params.vehicleId, active });
+});
+
+app.delete('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const result = await vehiclesCollection.deleteOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid });
+  if (!result.deletedCount) return res.status(404).json({ message: 'Vehicle was not found.' });
+  res.status(204).send();
+});
+
+app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const clientId = req.user.clientId;
+    const [orders, vendors, customers] = await Promise.all([
+      ordersCollection.find({ client_id: clientId }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(500).toArray(),
+      vendorsCollection.find({ client_id: clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
+      usersCollection.countDocuments({ client_id: clientId, role: 'customer' }),
+    ]);
+    const revenue = orders.reduce((total, order) => total + Number(order.amount || 0), 0);
+    const delivered = orders.filter(order => order.status === 'Delivered').length;
+    const activeDeliveries = orders.filter(order => !['Delivered', 'Rejected', 'Vendor rejected'].includes(order.status)).length;
+    const activeVendors = vendors.filter(vendor => vendor.status === 'active' || vendor.available === true).length;
+    const chart = Array.from({ length: 7 }, (_, offset) => {
+      const day = new Date();
+      day.setHours(0, 0, 0, 0);
+      day.setDate(day.getDate() - (6 - offset));
+      const nextDay = new Date(day);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const dayOrders = orders.filter(order => {
+        const created = new Date(order.created);
+        return !Number.isNaN(created.valueOf()) && created >= day && created < nextDay;
+      });
+      return { label: day.toLocaleDateString('en-IN', { weekday: 'short' }), water: dayOrders.filter(order => order.service === 'Water tanker').length, sewage: dayOrders.filter(order => order.service === 'Sewage pickup').length };
+    });
+    res.json({ orders, vendors, customers, revenue, delivered, activeDeliveries, activeVendors, chart });
+  } catch (error) {
+    console.error('Admin dashboard error:', error);
+    res.status(500).json({ message: 'Unable to load admin dashboard data.' });
+  }
+});
+
+app.post('/api/orders', authenticateToken, async (req, res) => {
+  try {
+    const order = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    if (!order.id || !order.service || !order.status) return res.status(400).json({ message: 'Order details are incomplete.' });
+    const deliveryOtp = typeof order.deliveryOtp === 'string' ? order.deliveryOtp : '';
+    delete order.deliveryOtp;
+    if (deliveryOtp) delete order.deliveryOtp;
+    order.client_id = req.user.clientId;
+    order.owner_uid = req.user.uid;
+    order.updated_at = new Date();
+    const existing = await ordersCollection.findOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, { projection: { status: 1 } });
+    const requestedStatus = order.status;
+    if (!existing && requestedStatus === 'Created') order.status = 'Pending acceptance';
+    const createdAt = new Date();
+    const statusHistory = requestedStatus === 'Created'
+      ? [{ status: 'Created', timestamp: createdAt, actorUid: req.user.uid, actorRole: req.user.role }, { status: 'Pending acceptance', timestamp: createdAt, actorUid: req.user.uid, actorRole: req.user.role }]
+      : [{ status: order.status, timestamp: createdAt, actorUid: req.user.uid, actorRole: req.user.role }];
+    const setOnInsert = { statusHistory };
+    const update: Record<string, any> = { $set: order, $setOnInsert: setOnInsert };
+    if (existing && existing.status !== order.status) update.$push = { statusHistory: { status: order.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } };
+    await ordersCollection.updateOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, update, { upsert: true });
+    res.status(200).json({ id: order.id });
+  } catch (error) {
+    console.error('Order persistence error:', error);
+    res.status(500).json({ message: 'Unable to save the order.' });
+  }
+});
+
+app.get('/api/orders', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+    const orders = await ordersCollection.find({ client_id: req.user.clientId, owner_uid: req.user.uid }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(100).toArray();
+    res.set('Cache-Control', 'no-store');
+    res.json({ orders });
+  } catch (error) {
+    console.error('Customer orders lookup error:', error);
+    res.status(500).json({ message: 'Unable to load customer orders.' });
+  }
+});
+
+app.patch('/api/vendor/availability', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+    const status = req.body.status === 'active' || req.body.available === true ? 'active' : 'inactive';
+    const available = status === 'active';
+    await vendorsCollection.updateOne(
+      { uid: req.user.uid, client_id: req.user.clientId },
+      {
+        $set: { available, status, updated_at: new Date() },
+        $setOnInsert: { uid: req.user.uid, client_id: req.user.clientId, name: req.user.displayName || 'Vendor', email: req.user.email || '', phone: req.user.phoneNumber || null, driver: req.user.displayName || 'Vendor', zone: '', vehicle: '', capacity: '', rating: '' },
+      },
+      { upsert: true },
+    );
+    await usersCollection.updateOne(
+      { uid: req.user.uid, client_id: req.user.clientId, role: 'vendor' },
+      { $set: { status, available, updated_at: new Date() } },
+    );
+    res.json({ available, status });
+  } catch (error) {
+    console.error('Vendor availability error:', error);
+    res.status(500).json({ message: 'Unable to update vendor availability.' });
+  }
+});
+
+app.patch('/api/vendor/location', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return res.status(400).json({ message: 'A valid vendor location is required.' });
+    await vendorsCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId }, { $set: { latitude, longitude, location_updated_at: new Date(), updated_at: new Date() } }, { upsert: true });
+    res.json({ latitude, longitude });
+  } catch (error) {
+    console.error('Vendor location error:', error);
+    res.status(500).json({ message: 'Unable to update vendor location.' });
+  }
+});
+
+app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+    const allowedStatuses = ['Created', 'Pending acceptance', 'Accepted', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected', 'En route', 'Arrived', 'Delivered'];
+    const update: Record<string, any> = {};
+    const action = req.body.action;
+    let selectedVehicle: Record<string, any> | null = null;
+    if (action === 'accept') {
+      selectedVehicle = await vehiclesCollection.findOne({ id: req.body.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true }, { projection: { _id: 0 } });
+      if (!selectedVehicle) return res.status(400).json({ message: 'Select an active vehicle before accepting the order.' });
+      update.status = 'Accepted';
+      update.vendorDecision = 'accepted';
+      update.vendorAcceptedAt = new Date();
+      update.assigned_vendor_uid = req.user.uid;
+      update.vendor = req.user.displayName || 'Assigned vendor';
+      update.vendorEmail = req.user.email;
+      update.vendorPhone = req.user.phoneNumber || null;
+      update.vehicleId = selectedVehicle.id;
+      update.vehicleRegistrationNumber = selectedVehicle.registration_number;
+      update.vehicleType = selectedVehicle.vehicle_type;
+      update.vehicleCapacity = selectedVehicle.capacity;
+      const customerDeliveryOtp = String(randomInt(100000, 1000000));
+      update.customerDeliveryOtp = customerDeliveryOtp;
+      update.deliveryOtpHash = createHash('sha256').update(customerDeliveryOtp).digest('hex');
+    } else if (action === 'reject') {
+      update.status = 'Rejected';
+      update.vendorDecision = 'rejected';
+      update.vendorRejectedAt = new Date();
+    } else if (allowedStatuses.includes(req.body.status)) update.status = req.body.status;
+    if (typeof req.body.eta === 'string') update.eta = req.body.eta;
+    if (typeof req.body.vendorLatitude === 'number') update.vendorLatitude = req.body.vendorLatitude;
+    if (typeof req.body.vendorLongitude === 'number') update.vendorLongitude = req.body.vendorLongitude;
+    if (typeof req.body.deliveryOtp === 'string') {
+      const order = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId, assigned_vendor_uid: req.user.uid }, { projection: { deliveryOtpHash: 1, status: 1 } });
+      if (!order) return res.status(404).json({ message: 'Vendor order was not found.' });
+      const submittedOtpHash = createHash('sha256').update(req.body.deliveryOtp).digest('hex');
+      if (!order.deliveryOtpHash || submittedOtpHash !== order.deliveryOtpHash) return res.status(400).json({ message: 'The delivery OTP is invalid.' });
+      update.status = 'Delivered';
+      update.otpVerifiedAt = new Date();
+    }
+    if (typeof req.body.vendorLatitude === 'number' || typeof req.body.vendorLongitude === 'number') update.lastLocationUpdatedAt = new Date();
+    if (!Object.keys(update).length) return res.status(400).json({ message: 'No valid order update was provided.' });
+    const orderFilter = action === 'accept'
+      ? { id: req.params.orderId, client_id: req.user.clientId, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }
+      : { id: req.params.orderId, client_id: req.user.clientId, assigned_vendor_uid: req.user.uid };
+    const existing = await ordersCollection.findOne(orderFilter, { projection: { status: 1 } });
+    if (!existing) {
+      const orderExists = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { assigned_vendor_uid: 1, status: 1 } });
+      if (action === 'accept' && orderExists?.assigned_vendor_uid && orderExists.assigned_vendor_uid !== req.user.uid) return res.status(409).json({ message: 'This order has already been accepted by another vendor.' });
+      return res.status(404).json({ message: 'Vendor order was not found for this tenant or vendor.' });
+    }
+    const updateDocument: Record<string, any> = { $set: update };
+    if (update.status && existing.status !== update.status) updateDocument.$push = { statusHistory: { status: update.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } };
+    const result = await ordersCollection.updateOne(orderFilter, updateDocument);
+    if (!result.matchedCount) return res.status(404).json({ message: 'Vendor order was not found.' });
+    if (action === 'accept') {
+      const acceptedOrder = { ...existing, ...update };
+      if (selectedVehicle) void notifyCustomerOfAcceptance(acceptedOrder, selectedVehicle).catch(error => console.error('Acceptance notification error:', error));
+    }
+    res.json({ id: req.params.orderId, ...update });
+  } catch (error) {
+    console.error('Vendor order update error:', error);
+    res.status(500).json({ message: 'Unable to update vendor order.' });
+  }
+});
+
+// Create Razorpay order
+app.post('/createRazorpayOrder', authenticateToken, async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+
+    const receipt =
+      typeof req.body.receipt === 'string'
+        ? req.body.receipt
+        : `urban-tanker-${Date.now()}`;
+
+    if (!Number.isInteger(amount) || amount <= 0) {
+      return res.status(400).json({
+        message: 'A valid payment amount is required.',
+      });
+    }
+
+    const razorpayOrder = await razorpay.orders.create({
+      amount,
+      currency: 'INR',
+      receipt,
+    });
+
+    return res.json({
+      orderId: razorpayOrder.id,
+      amount: razorpayOrder.amount,
+      currency: razorpayOrder.currency,
+      keyId: process.env.RAZORPAY_KEY_ID,
+    });
+  } catch (error) {
+    console.error('Razorpay order creation error:', error);
+
+    return res.status(500).json({
+      message: 'Unable to create Razorpay order.',
+    });
+  }
+});
+
+// Verify Razorpay payment
+app.post('/verifyRazorpayPayment', authenticateToken, async (req, res) => {
+  try {
+    const {
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    } = req.body;
+
+    if (
+      typeof razorpayOrderId !== 'string' ||
+      typeof razorpayPaymentId !== 'string' ||
+      typeof razorpaySignature !== 'string'
+    ) {
+      return res.status(400).json({
+        message: 'Razorpay payment details are incomplete.',
+      });
+    }
+
+    const expectedSignature = createHmac(
+      'sha256',
+      process.env.RAZORPAY_KEY_SECRET as string,
+    )
+      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+      .digest('hex');
+
+    const verified = expectedSignature === razorpaySignature;
+
+    if (!verified) {
+      return res.status(400).json({
+        verified: false,
+        message: 'Razorpay payment verification failed.',
+      });
+    }
+
+    return res.json({
+      verified: true,
+      paymentId: razorpayPaymentId,
+      orderId: razorpayOrderId,
+    });
+  } catch (error) {
+    console.error('Razorpay payment verification error:', error);
+
+    return res.status(500).json({
+      message: 'Unable to verify Razorpay payment.',
+    });
+  }
+});
+
+// API Routes
+app.use('/api/auth', authRoutes);
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found' });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ 
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+// Start server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Urban Tanker Backend running on http://0.0.0.0:${PORT}`);
+  console.log(`📝 Health check: http://localhost:${PORT}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received. Closing server...');
+  await closeConnection();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received. Closing server...');
+  await closeConnection();
+  process.exit(0);
+});
+
+export default app;

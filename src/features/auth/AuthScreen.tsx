@@ -23,7 +23,6 @@ export function AuthScreen() {
     authPassword: password,
     authPhone: phone,
     authBusy: busy,
-    authError: error,
     authRememberMe: rememberMe,
     toast,
     setAuthRole: setRole,

@@ -10,10 +10,10 @@ import { readEncryptedContent, readEncryptedState, saveEncryptedContent } from '
 import { hydrateCloudState, hydrateContent, useAppStore } from './store';
 import { useAuth } from './providers/AuthContext';
 import type { AppContent } from '../shared/lib/content';
-import type { Role, Workspace } from '../shared/lib/types';
+import type { Workspace } from '../shared/lib/types';
 
 export function App() {
-  const { data, isHydrated, active, toast, mobileNav, checkoutOpen, setRole, setActive, setMobileNav, notify, setCheckoutOpen, setHydrated, signOut, dismissToast } = useAppStore();
+  const { data, isHydrated, active, toast, mobileNav, checkoutOpen, setActive, setMobileNav, setHydrated, notify, signOut, dismissToast } = useAppStore();
   const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
@@ -77,9 +77,9 @@ export function App() {
     {checkoutOpen && <CheckoutModal />}
   </>;
   return <>
-    <AppShell role={data.role} active={active} orderCount={data.orders.length} mobileNav={mobileNav} onRoleChange={role => setRole(role as Role)} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
+    <AppShell role={data.role} active={active} orderCount={data.orders.length} mobileNav={mobileNav} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
       {data.role === 'vendor' && <VendorPortal view={active} />}
-      {data.role === 'admin' && <AdminDashboard />}
+      {data.role === 'admin' && <AdminDashboard view={active} />}
     </AppShell>
     <Toast message={toast} onClose={dismissToast} />
     {checkoutOpen && <CheckoutModal />}

@@ -10,7 +10,7 @@ export async function authenticateToken(req, res, next) {
     return res.status(401).json({ message: 'Access token required' });
   }
 
-  const user = verifyToken(token);
+  const user = verifyToken(token) as Record<string, any> | null;
   if (!user) {
     return res.status(403).json({ message: 'Invalid or expired token' });
   }
