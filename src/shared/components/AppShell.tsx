@@ -4,7 +4,7 @@ import { useContent } from '../hooks/useContent';
 
 export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, onToggleMobileNav, onNotify, onSignOut, children }) {
   const content = useContent();
-  const navItems = [['overview', content.operations.overview], ['book', content.operations.bookTanker], ['orders', content.operations.orders], ['track', content.operations.liveTracking], ...(role === 'vendor' ? [['fleet', 'Fleet']] : []), ['support', content.operations.helpSupport]];
+  const navItems = [['overview', content.operations.overview], ['book', content.operations.bookTanker], ['orders', content.operations.orders], ['track', content.operations.liveTracking], ...(role === 'vendor' ? [['fleet', 'Fleet']] : []), ...(role === 'admin' ? [['customers', 'Customers'], ['vendors', 'Vendors'], ['coupons', 'Coupons']] : []), ['support', content.operations.helpSupport]];
   return <div className={`app role-${role}`}>
     <header className="topbar">
       <button className="mobile-menu" onClick={onToggleMobileNav} aria-label={content.operations.openNavigation}><Menu size={20} /></button>

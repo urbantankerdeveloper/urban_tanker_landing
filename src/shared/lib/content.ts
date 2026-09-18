@@ -6,6 +6,7 @@ export interface CouponContent {
   discount: number;
   service?: string;
   firstBooking?: boolean;
+  active?: boolean;
 }
 
 export interface AppContent {

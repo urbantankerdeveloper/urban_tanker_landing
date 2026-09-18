@@ -1,5 +1,5 @@
 export type Role = 'customer' | 'vendor' | 'admin';
-export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support' | 'fleet';
+export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support' | 'fleet' | 'customers' | 'vendors' | 'coupons';
 export type OrderStatus = 'Created' | 'Pending acceptance' | 'Accepted' | 'En route' | 'Arrived' | 'Delivered' | 'Rejected' | 'Vendor assigned' | 'Vendor accepted' | 'Vendor rejected';
 
 export interface Profile {
@@ -63,12 +63,16 @@ export interface Order {
   vehicleRegistrationNumber?: string;
   vehicleType?: string;
   vehicleCapacity?: string;
+  driverId?: string;
+  driverPhone?: string;
+  driverActive?: boolean;
   statusHistory?: Array<{ status: OrderStatus; timestamp: string; actorUid?: string; actorRole?: Role }>;
 }
 
 export interface Vendor {
   uid?: string;
   email?: string;
+  phone?: string;
   name: string;
   driver: string;
   zone: string;
@@ -79,6 +83,7 @@ export interface Vendor {
   rating: string;
   latitude?: number;
   longitude?: number;
+  updated_at?: string | Date;
 }
 
 export interface Vehicle {
@@ -87,6 +92,10 @@ export interface Vehicle {
   vehicleType: string;
   capacity: string;
   active: boolean;
+  driverId: string;
+  driverName: string;
+  driverPhone: string;
+  driverActive: boolean;
   imageUrl?: string;
 }
 

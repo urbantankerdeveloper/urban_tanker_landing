@@ -1,4 +1,5 @@
 import { getDatabase } from './connection.js';
+import { randomUUID } from 'node:crypto';
 
 const collections = {
   users: {
@@ -34,6 +35,21 @@ const collections = {
       },
     },
   },
+  drivers: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'vendor_uid', 'name', 'active', 'updated_at'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        vendor_uid: { bsonType: 'string' },
+        name: { bsonType: 'string' },
+        phone: { bsonType: 'string' },
+        active: { bsonType: 'bool' },
+        updated_at: { bsonType: 'date' },
+      },
+    },
+  },
   vehicles: {
     $jsonSchema: {
       bsonType: 'object',
@@ -45,6 +61,10 @@ const collections = {
         registration_number: { bsonType: 'string' },
         vehicle_type: { bsonType: 'string' },
         capacity: { bsonType: 'string' },
+        driver_id: { bsonType: 'string' },
+        driver_name: { bsonType: 'string' },
+        driver_phone: { bsonType: 'string' },
+        driver_active: { bsonType: 'bool' },
         active: { bsonType: 'bool' },
         image_url: { bsonType: 'string' },
         updated_at: { bsonType: 'date' },
@@ -64,6 +84,14 @@ const collections = {
         deliveryLongitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
         status: { enum: ['Created', 'Pending acceptance', 'Accepted', 'En route', 'Arrived', 'Delivered', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected'] },
         vendorDecision: { enum: ['pending', 'accepted', 'rejected'] },
+        vehicleId: { bsonType: 'string' },
+        vehicleRegistrationNumber: { bsonType: 'string' },
+        vehicleType: { bsonType: 'string' },
+        vehicleCapacity: { bsonType: 'string' },
+        driverId: { bsonType: 'string' },
+        driver: { bsonType: 'string' },
+        driverPhone: { bsonType: 'string' },
+        driverActive: { bsonType: 'bool' },
         deliveryOtpHash: { bsonType: 'string' },
         customerDeliveryOtp: { bsonType: 'string' },
         otpVerifiedAt: { bsonType: 'date' },
@@ -151,8 +179,25 @@ const initDatabase = async () => {
     await db.collection('vendors').createIndex({ client_id: 1, uid: 1 }, { unique: true, name: 'client_vendor_unique' });
     await db.collection('vendors').createIndex({ client_id: 1, available: 1 }, { name: 'available_vendors' });
     await db.collection('vendors').createIndex({ client_id: 1, status: 1 }, { name: 'vendor_status' });
+    await db.collection('drivers').createIndex({ client_id: 1, vendor_uid: 1, active: 1 }, { name: 'vendor_drivers' });
+    await db.collection('drivers').createIndex({ client_id: 1, vendor_uid: 1, id: 1 }, { unique: true, name: 'vendor_driver_id_unique' });
     await db.collection('vehicles').createIndex({ client_id: 1, vendor_uid: 1, active: 1 }, { name: 'vendor_vehicles' });
     await db.collection('vehicles').createIndex({ client_id: 1, registration_number: 1 }, { unique: true, name: 'vehicle_registration_unique' });
+    await db.collection('vehicles').createIndex({ client_id: 1, vendor_uid: 1, driver_id: 1 }, { name: 'vendor_vehicle_driver' });
+    await db.collection('vehicles').updateMany(
+      { driver_active: { $exists: false } },
+      { $set: { driver_active: false } },
+    );
+    const legacyVehicles = await db.collection('vehicles').find({ driver_name: { $exists: true, $type: 'string' }, driver_id: { $exists: false } }, { projection: { _id: 1 } }).toArray();
+    for (const vehicle of legacyVehicles) await db.collection('vehicles').updateOne({ _id: vehicle._id }, { $set: { driver_id: randomUUID() } });
+    const vehiclesWithDrivers = await db.collection('vehicles').find({ driver_id: { $exists: true }, driver_name: { $exists: true } }, { projection: { _id: 0, driver_id: 1, client_id: 1, vendor_uid: 1, driver_name: 1, driver_phone: 1, driver_active: 1 } }).toArray();
+    for (const vehicle of vehiclesWithDrivers) {
+      await db.collection('drivers').updateOne(
+        { id: vehicle.driver_id, client_id: vehicle.client_id, vendor_uid: vehicle.vendor_uid },
+        { $setOnInsert: { id: vehicle.driver_id, client_id: vehicle.client_id, vendor_uid: vehicle.vendor_uid, name: vehicle.driver_name, phone: vehicle.driver_phone || '', active: vehicle.driver_active === true, updated_at: new Date() } },
+        { upsert: true },
+      );
+    }
     await db.collection('vendors').updateMany({ status: 'Online' }, { $set: { status: 'active' } });
     await db.collection('vendors').updateMany({ status: 'Unavailable' }, { $set: { status: 'inactive' } });
     await db.collection('vendors').updateMany({ status: { $exists: false } }, { $set: { status: 'inactive', available: false, updated_at: new Date() } });

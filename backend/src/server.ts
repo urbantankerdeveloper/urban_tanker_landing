@@ -4,14 +4,15 @@ import compression from 'compression';
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
-import { closeConnection, contentCollection, ordersCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import { closeConnection, contentCollection, driversCollection, ordersCollection, sessionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import Razorpay from 'razorpay';
+import { hashPassword } from './utils/auth.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = Number(process.env.PORT || 5000);
+const PORT = Number(process.env.PORT || 8080);
 const contentCache = new Map();
 const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_MS || 60000);
 const vendorDispatchRadiusKm = Number(process.env.VENDOR_DISPATCH_RADIUS_KM || 25);
@@ -35,6 +36,11 @@ async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: R
     const body = new URLSearchParams({ To: order.customerPhone, From: smsFrom, Body: message });
     await fetch(`https://api.twilio.com/2010-04-01/Accounts/${smsSid}/Messages.json`, { method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body });
   }
+}
+
+function removeDeliveryOtpFields<T extends Record<string, any>>(order: T): Omit<T, 'customerDeliveryOtp' | 'deliveryOtpHash'> {
+  const { customerDeliveryOtp, deliveryOtpHash, ...safeOrder } = order;
+  return safeOrder;
 }
 
 function distanceKm(firstLatitude, firstLongitude, secondLatitude, secondLongitude) {
@@ -110,7 +116,7 @@ app.get('/api/vendor/dashboard', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const vendor = await vendorsCollection.findOne({ uid: req.user.uid, client_id: req.user.clientId }, { projection: { _id: 0 } });
-    const orders = await ordersCollection.find({ client_id: req.user.clientId, status: { $nin: ['Rejected', 'Vendor rejected'] }, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(25).toArray();
+    const orders = await ordersCollection.find({ client_id: req.user.clientId, status: { $nin: ['Rejected', 'Vendor rejected'] }, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ created: -1 }).limit(25).toArray();
     const visibleOrders = orders.filter(order => order.assigned_vendor_uid === req.user.uid || (vendor?.status === 'active' && (typeof vendor?.latitude !== 'number' || typeof vendor?.longitude !== 'number' || typeof order.deliveryLatitude !== 'number' || typeof order.deliveryLongitude !== 'number' || distanceKm(vendor.latitude, vendor.longitude, order.deliveryLatitude, order.deliveryLongitude) <= vendorDispatchRadiusKm)));
     const vehicles = await vehiclesCollection.find({ client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray();
     res.set('Cache-Control', 'no-store');
@@ -133,9 +139,14 @@ app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
     const registrationNumber = String(req.body.registrationNumber || '').trim().toUpperCase();
     const vehicleType = String(req.body.vehicleType || '').trim();
     const capacity = String(req.body.capacity || '').trim();
-    if (!registrationNumber || !vehicleType) return res.status(400).json({ message: 'Registration number and vehicle type are required.' });
+    const driverName = String(req.body.driverName || '').trim();
+    const driverPhone = String(req.body.driverPhone || '').trim();
+    if (!registrationNumber || !vehicleType || !driverName) return res.status(400).json({ message: 'Registration number, vehicle type, and driver name are required.' });
     const imageUrl = typeof req.body.imageUrl === 'string' && req.body.imageUrl.length <= 2_000_000 ? req.body.imageUrl : '';
-    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, active: false, updated_at: new Date() };
+    const now = new Date();
+    const driverId = randomUUID();
+    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, driver_id: driverId, driver_name: driverName, driver_phone: driverPhone, driver_active: false, active: false, updated_at: now };
+    await driversCollection.insertOne({ id: driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, name: driverName, phone: driverPhone, active: false, updated_at: now });
     await vehiclesCollection.insertOne(vehicle);
     res.status(201).json({ vehicle });
   } catch (error) {
@@ -147,15 +158,22 @@ app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
 app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
   const active = Boolean(req.body.active);
-  const result = await vehiclesCollection.updateOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: { active, updated_at: new Date() } });
+  const update: Record<string, any> = { active, updated_at: new Date() };
+  if (typeof req.body.driverActive === 'boolean') update.driver_active = req.body.driverActive;
+  const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1 } });
+  if (!vehicle) return res.status(404).json({ message: 'Vehicle was not found.' });
+  const result = await vehiclesCollection.updateOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: update });
   if (!result.matchedCount) return res.status(404).json({ message: 'Vehicle was not found.' });
+  if (typeof req.body.driverActive === 'boolean') await driversCollection.updateOne({ id: vehicle.driver_id, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: { active: req.body.driverActive, updated_at: new Date() } });
   res.json({ id: req.params.vehicleId, active });
 });
 
 app.delete('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1 } });
   const result = await vehiclesCollection.deleteOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid });
   if (!result.deletedCount) return res.status(404).json({ message: 'Vehicle was not found.' });
+  if (vehicle?.driver_id) await driversCollection.deleteOne({ id: vehicle.driver_id, client_id: req.user.clientId, vendor_uid: req.user.uid });
   res.status(204).send();
 });
 
@@ -163,10 +181,10 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const clientId = req.user.clientId;
-    const [orders, vendors, customers] = await Promise.all([
-      ordersCollection.find({ client_id: clientId }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(500).toArray(),
+    const [orders, vendors, customerDocuments] = await Promise.all([
+      ordersCollection.find({ client_id: clientId }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ created: -1 }).limit(500).toArray(),
       vendorsCollection.find({ client_id: clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
-      usersCollection.countDocuments({ client_id: clientId, role: 'customer' }),
+      usersCollection.find({ client_id: clientId, role: 'customer' }, { projection: { _id: 0, uid: 1, email: 1, display_name: 1, phone_number: 1, status: 1, created_at: 1, updated_at: 1 } }).sort({ created_at: -1 }).limit(500).toArray(),
     ]);
     const revenue = orders.reduce((total, order) => total + Number(order.amount || 0), 0);
     const delivered = orders.filter(order => order.status === 'Delivered').length;
@@ -184,10 +202,67 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
       });
       return { label: day.toLocaleDateString('en-IN', { weekday: 'short' }), water: dayOrders.filter(order => order.service === 'Water tanker').length, sewage: dayOrders.filter(order => order.service === 'Sewage pickup').length };
     });
+    const customers = customerDocuments.map(customer => ({ uid: customer.uid, email: customer.email, name: customer.display_name, phone: customer.phone_number, status: customer.status || 'active', createdAt: customer.created_at, updatedAt: customer.updated_at }));
     res.json({ orders, vendors, customers, revenue, delivered, activeDeliveries, activeVendors, chart });
   } catch (error) {
     console.error('Admin dashboard error:', error);
     res.status(500).json({ message: 'Unable to load admin dashboard data.' });
+  }
+});
+
+app.post('/api/admin/users', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const role = req.body.role === 'vendor' ? 'vendor' : req.body.role === 'customer' ? 'customer' : '';
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const displayName = String(req.body.displayName || '').trim();
+    const password = String(req.body.password || '');
+    const phoneNumber = String(req.body.phoneNumber || '').trim();
+    if (!role || !email || !displayName || password.length < 8) return res.status(400).json({ message: 'Role, name, email, and a password of at least 8 characters are required.' });
+    if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'A valid email address is required.' });
+    if (phoneNumber && !/^[6-9]\d{9}$/.test(phoneNumber)) return res.status(400).json({ message: 'Invalid Indian phone number.' });
+    const clientId = req.user.clientId;
+    if (await usersCollection.findOne({ email, client_id: clientId })) return res.status(409).json({ message: 'Email already registered.' });
+    const now = new Date();
+    const uid = randomUUID();
+    const user = { _id: uid, uid, email, password_hash: await hashPassword(password), display_name: displayName, phone_number: phoneNumber || null, role, email_verified: false, phone_verified: false, status: role === 'vendor' ? 'inactive' : 'active', available: role === 'vendor' ? false : undefined, created_at: now, updated_at: now, last_login: null, client_id: clientId };
+    await usersCollection.insertOne(user);
+    if (role === 'vendor') await vendorsCollection.insertOne({ uid, client_id: clientId, name: displayName, email, phone: phoneNumber || null, driver: '', zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, rating: '', updated_at: now });
+    res.status(201).json({ uid, role, name: displayName, email, phone: phoneNumber, status: user.status, available: user.available === true });
+  } catch (error) {
+    console.error('Admin user creation error:', error);
+    res.status(500).json({ message: 'Unable to create account.' });
+  }
+});
+
+app.delete('/api/admin/users/:uid', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    if (req.params.uid === req.user.uid) return res.status(400).json({ message: 'You cannot delete your own admin account.' });
+    const filter = { uid: req.params.uid, client_id: req.user.clientId };
+    const user = await usersCollection.findOne(filter, { projection: { role: 1 } });
+    if (!user || !['customer', 'vendor'].includes(user.role)) return res.status(404).json({ message: 'Account was not found.' });
+    await Promise.all([usersCollection.deleteOne(filter), sessionsCollection.deleteMany(filter), user.role === 'vendor' ? vendorsCollection.deleteOne(filter) : Promise.resolve(), user.role === 'vendor' ? vehiclesCollection.deleteMany({ ...filter, vendor_uid: req.params.uid }) : Promise.resolve()]);
+    res.status(204).send();
+  } catch (error) {
+    console.error('Admin user deletion error:', error);
+    res.status(500).json({ message: 'Unable to delete account.' });
+  }
+});
+
+app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const active = req.body.active === true;
+    const status = active ? 'active' : 'inactive';
+    const filter = { uid: req.params.vendorUid, client_id: req.user.clientId };
+    const vendorResult = await vendorsCollection.updateOne(filter, { $set: { status, available: active, updated_at: new Date() } });
+    if (!vendorResult.matchedCount) return res.status(404).json({ message: 'Vendor was not found.' });
+    await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, updated_at: new Date() } });
+    res.json({ uid: req.params.vendorUid, status, available: active });
+  } catch (error) {
+    console.error('Admin vendor status error:', error);
+    res.status(500).json({ message: 'Unable to update vendor status.' });
   }
 });
 
@@ -222,7 +297,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 app.get('/api/orders', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
-    const orders = await ordersCollection.find({ client_id: req.user.clientId, owner_uid: req.user.uid }, { projection: { _id: 0, deliveryOtpHash: 0 } }).sort({ created: -1 }).limit(100).toArray();
+    const orders = await ordersCollection.find({ client_id: req.user.clientId, owner_uid: req.user.uid }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ created: -1 }).limit(100).toArray();
     res.set('Cache-Control', 'no-store');
     res.json({ orders });
   } catch (error) {
@@ -279,6 +354,8 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
     if (action === 'accept') {
       selectedVehicle = await vehiclesCollection.findOne({ id: req.body.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true }, { projection: { _id: 0 } });
       if (!selectedVehicle) return res.status(400).json({ message: 'Select an active vehicle before accepting the order.' });
+      const selectedDriver = await driversCollection.findOne({ id: req.body.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true });
+      if (!selectedDriver || selectedDriver.id !== selectedVehicle.driver_id || selectedVehicle.driver_active !== true) return res.status(400).json({ message: 'Select an active driver assigned to the selected vehicle before accepting the order.' });
       update.status = 'Accepted';
       update.vendorDecision = 'accepted';
       update.vendorAcceptedAt = new Date();
@@ -290,6 +367,10 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       update.vehicleRegistrationNumber = selectedVehicle.registration_number;
       update.vehicleType = selectedVehicle.vehicle_type;
       update.vehicleCapacity = selectedVehicle.capacity;
+      update.driverId = selectedVehicle.driver_id;
+      update.driver = selectedVehicle.driver_name;
+      update.driverPhone = selectedVehicle.driver_phone;
+      update.driverActive = selectedVehicle.driver_active;
       const customerDeliveryOtp = String(randomInt(100000, 1000000));
       update.customerDeliveryOtp = customerDeliveryOtp;
       update.deliveryOtpHash = createHash('sha256').update(customerDeliveryOtp).digest('hex');
@@ -314,7 +395,7 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
     const orderFilter = action === 'accept'
       ? { id: req.params.orderId, client_id: req.user.clientId, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }
       : { id: req.params.orderId, client_id: req.user.clientId, assigned_vendor_uid: req.user.uid };
-    const existing = await ordersCollection.findOne(orderFilter, { projection: { status: 1 } });
+    const existing = await ordersCollection.findOne(orderFilter, { projection: { _id: 0, status: 1, owner_uid: 1, customerEmail: 1, customerPhone: 1 } });
     if (!existing) {
       const orderExists = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { assigned_vendor_uid: 1, status: 1 } });
       if (action === 'accept' && orderExists?.assigned_vendor_uid && orderExists.assigned_vendor_uid !== req.user.uid) return res.status(409).json({ message: 'This order has already been accepted by another vendor.' });
@@ -325,10 +406,19 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
     const result = await ordersCollection.updateOne(orderFilter, updateDocument);
     if (!result.matchedCount) return res.status(404).json({ message: 'Vendor order was not found.' });
     if (action === 'accept') {
-      const acceptedOrder = { ...existing, ...update };
+      const customer = existing.customerEmail || existing.customerPhone ? existing : await usersCollection.findOne(
+        { uid: existing.owner_uid, client_id: req.user.clientId, role: 'customer' },
+        { projection: { _id: 0, email: 1, phoneNumber: 1 } },
+      );
+      const acceptedOrder = {
+        ...existing,
+        ...update,
+        customerEmail: existing.customerEmail || customer?.email,
+        customerPhone: existing.customerPhone || customer?.phoneNumber,
+      };
       if (selectedVehicle) void notifyCustomerOfAcceptance(acceptedOrder, selectedVehicle).catch(error => console.error('Acceptance notification error:', error));
     }
-    res.json({ id: req.params.orderId, ...update });
+    res.json(removeDeliveryOtpFields({ id: req.params.orderId, ...update }));
   } catch (error) {
     console.error('Vendor order update error:', error);
     res.status(500).json({ message: 'Unable to update vendor order.' });

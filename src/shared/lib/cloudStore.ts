@@ -119,17 +119,17 @@ export async function loadVendorVehicles(): Promise<Vehicle[]> {
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/vendor/vehicles`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
   if (!response.ok) throw new Error('Unable to load vehicles.');
-  const result = await response.json() as { vehicles: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean }> };
-  return (result.vehicles || []).map(vehicle => ({ id: vehicle.id, registrationNumber: vehicle.registration_number, vehicleType: vehicle.vehicle_type, capacity: vehicle.capacity || '', active: vehicle.active, imageUrl: (vehicle as any).image_url }));
+  const result = await response.json() as { vehicles: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; driver_id?: string; driver_name?: string; driver_phone?: string; driver_active?: boolean }> };
+  return (result.vehicles || []).map(vehicle => ({ id: vehicle.id, registrationNumber: vehicle.registration_number, vehicleType: vehicle.vehicle_type, capacity: vehicle.capacity || '', active: vehicle.active, driverId: vehicle.driver_id || '', driverName: vehicle.driver_name || '', driverPhone: vehicle.driver_phone || '', driverActive: vehicle.driver_active === true, imageUrl: (vehicle as any).image_url }));
 }
 
-export async function createVendorVehicle(input: { registrationNumber: string; vehicleType: string; capacity: string; imageUrl?: string }): Promise<Vehicle> {
+export async function createVendorVehicle(input: { registrationNumber: string; vehicleType: string; capacity: string; driverName: string; driverPhone: string; imageUrl?: string }): Promise<Vehicle> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/vendor/vehicles`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
-  const payload = await response.json() as { vehicle?: { id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean }; message?: string };
+  const payload = await response.json() as { vehicle?: { id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; driver_id?: string; driver_name?: string; driver_phone?: string; driver_active?: boolean }; message?: string };
   if (!response.ok || !payload.vehicle) throw new Error(payload.message || 'Unable to create vehicle.');
-  return { id: payload.vehicle.id, registrationNumber: payload.vehicle.registration_number, vehicleType: payload.vehicle.vehicle_type, capacity: payload.vehicle.capacity || '', active: payload.vehicle.active, imageUrl: (payload.vehicle as any).image_url };
+  return { id: payload.vehicle.id, registrationNumber: payload.vehicle.registration_number, vehicleType: payload.vehicle.vehicle_type, capacity: payload.vehicle.capacity || '', active: payload.vehicle.active, driverId: payload.vehicle.driver_id || '', driverName: payload.vehicle.driver_name || '', driverPhone: payload.vehicle.driver_phone || '', driverActive: payload.vehicle.driver_active === true, imageUrl: (payload.vehicle as any).image_url };
 }
 
 export async function setVendorVehicleActive(vehicleId: string, active: boolean): Promise<void> {
@@ -137,6 +137,13 @@ export async function setVendorVehicleActive(vehicleId: string, active: boolean)
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/vendor/vehicles/${encodeURIComponent(vehicleId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
   if (!response.ok) throw new Error('Unable to update vehicle status.');
+}
+
+export async function setVendorDriverActive(vehicleId: string, driverActive: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/vehicles/${encodeURIComponent(vehicleId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active: true, driverActive }) });
+  if (!response.ok) throw new Error('Unable to update driver status.');
 }
 
 export async function deleteVendorVehicle(vehicleId: string): Promise<void> {
@@ -149,12 +156,30 @@ export async function deleteVendorVehicle(vehicleId: string): Promise<void> {
 export interface AdminDashboardData {
   orders: AppData['orders'];
   vendors: Vendor[];
-  customers: number;
+  customers: AdminCustomer[];
   revenue: number;
   delivered: number;
   activeDeliveries: number;
   activeVendors: number;
   chart: Array<{ label: string; water: number; sewage: number }>;
+}
+
+export interface AdminCustomer {
+  uid: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  status: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+}
+
+export interface AdminAccountInput {
+  role: 'customer' | 'vendor';
+  displayName: string;
+  email: string;
+  phoneNumber: string;
+  password: string;
 }
 
 export async function loadAdminDashboard(): Promise<AdminDashboardData> {
@@ -165,10 +190,39 @@ export async function loadAdminDashboard(): Promise<AdminDashboardData> {
   return await response.json() as AdminDashboardData;
 }
 
-export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; deliveryOtp?: string } = {}): Promise<void> {
+export async function createAdminAccount(input: AdminAccountInput): Promise<{ uid: string; role: AdminAccountInput['role']; name: string; email: string; phone: string; status: string; available: boolean }> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${API_BASE_URL}/api/vendor/orders/${encodeURIComponent(order.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ action: options.action, vehicleId: options.vehicleId, deliveryOtp: options.deliveryOtp, status: order.status, eta: order.eta, vendorLatitude: order.vendorLatitude, vendorLongitude: order.vendorLongitude }) });
+  const response = await fetch(`${API_BASE_URL}/api/admin/users`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { uid?: string; role?: AdminAccountInput['role']; name?: string; email?: string; phone?: string; status?: string; available?: boolean; message?: string };
+  if (!response.ok || !payload.uid || !payload.role) throw new Error(payload.message || 'Unable to create account.');
+  return { uid: payload.uid, role: payload.role, name: payload.name || input.displayName, email: payload.email || input.email, phone: payload.phone || input.phoneNumber, status: payload.status || 'inactive', available: payload.available === true };
+}
+
+export async function deleteAdminAccount(uid: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/users/${encodeURIComponent(uid)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  if (!response.ok) { const payload = await response.json().catch(() => ({})) as { message?: string }; throw new Error(payload.message || 'Unable to delete account.'); }
+}
+
+export async function updateAdminVendorStatus(vendorUid: string, active: boolean): Promise<{ uid: string; status: string; available: boolean }> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vendors/${encodeURIComponent(vendorUid)}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId },
+    body: JSON.stringify({ active }),
+  });
+  const payload = await response.json().catch(() => ({})) as { uid?: string; status?: string; available?: boolean; message?: string };
+  if (!response.ok || !payload.uid) throw new Error(payload.message || 'Unable to update vendor status.');
+  return { uid: payload.uid, status: payload.status || (active ? 'active' : 'inactive'), available: payload.available === true };
+}
+
+export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string } = {}): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/orders/${encodeURIComponent(order.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ action: options.action, vehicleId: options.vehicleId, driverId: options.driverId, deliveryOtp: options.deliveryOtp, status: order.status, eta: order.eta, vendorLatitude: order.vendorLatitude, vendorLongitude: order.vendorLongitude }) });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { message?: string };
     throw new Error(payload.message || 'Unable to update vendor order.');
