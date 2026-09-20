@@ -1,13 +1,11 @@
-import { Bell, ChevronDown, ChevronsLeft, ChevronsRight, Droplets, Menu, Search, Settings2, ShieldCheck } from 'lucide-react';
+import { Bell, ChevronDown, Droplets, Menu, Search, Settings2, ShieldCheck } from 'lucide-react';
 import { UserBadge } from './ui';
 import { useContent } from '../hooks/useContent';
-import { useState } from 'react';
 
 export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, onToggleMobileNav, onNotify, onSignOut, children }) {
   const content = useContent();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const navItems = [['overview', content.operations.overview], ['book', content.operations.bookTanker], ['orders', content.operations.orders], ['track', content.operations.liveTracking], ...(role === 'vendor' ? [['fleet', 'Fleet']] : []), ...(role === 'admin' ? [['customers', 'Customers'], ['vendors', 'Vendors'], ['coupons', 'Coupons']] : []), ['support', content.operations.helpSupport]];
-  return <div className={`app role-${role} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+  return <div className={`app role-${role}`}>
     <header className="topbar">
       <button className="mobile-menu" onClick={onToggleMobileNav} aria-label={content.operations.openNavigation}><Menu size={20} /></button>
       <div className="brand"><span className="brand-mark"><Droplets size={18} /></span><span>{content.brand.name}</span></div>
@@ -16,7 +14,6 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
       <div className="topbar-actions"><button className="icon-button" aria-label={content.operations.notificationLabel}><Bell size={18} /><i>3</i></button><UserBadge onClick={onSignOut} /></div>
     </header>
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
-      <button className="sidebar-toggle" type="button" onClick={() => setSidebarCollapsed(current => !current)} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>{sidebarCollapsed ? <ChevronsRight size={17} /> : <ChevronsLeft size={17} />}</button>
       <div className="sidebar-role"><span className="eyebrow">{content.operations.workspaceLabel}</span><strong>{role === 'customer' ? content.operations.customerView : role === 'vendor' ? content.operations.vendorPortal : content.operations.adminCommandCentre}</strong></div>
       <nav>{navItems.map(([id, label], index) => <button className={active === id ? 'active' : ''} key={id} onClick={() => onNavigate(id)}><span className="nav-symbol" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><span>{label}</span>{id === 'orders' && orderCount > 0 && <b>{orderCount}</b>}</button>)}</nav>
       <div className="sidebar-bottom"><div className="secure-note"><ShieldCheck size={16} /><span><b>{content.operations.trustedTitle}</b><small>{content.operations.trustedDescription}</small></span></div><button onClick={() => onNotify(`${content.operations.settings} panel is available in the operations workspace`)}><Settings2 size={17} /> {content.operations.settings}</button></div>
