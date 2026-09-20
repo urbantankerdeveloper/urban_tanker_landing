@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { getCurrentUser } from '../../features/auth/auth';
 import { API_BASE_URL } from './apiConfig';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent, saveEncryptedState } from './secureCache';
@@ -40,6 +41,12 @@ export async function subscribeToContent(clientId: string, onContent: CloudState
     else onError(error instanceof Error ? error : new Error(String(error)));
   }
   return () => {};
+}
+
+export async function loadContent(clientId: string): Promise<CloudState> {
+  const response = await fetch(`${API_BASE_URL}/api/content/${encodeURIComponent(clientId)}`, { cache: 'no-store' });
+  if (!response.ok) throw new Error('Unable to refresh content configuration.');
+  return await response.json() as CloudState;
 }
 
 export async function subscribeToCloudState(onState: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
@@ -227,10 +234,10 @@ export async function updateAdminVendorStatus(vendorUid: string, active: boolean
   return { uid: payload.uid, status: payload.status || (active ? 'active' : 'inactive'), available: payload.available === true };
 }
 
-export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string } = {}): Promise<void> {
+export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string; rejectionReason?: string } = {}): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${API_BASE_URL}/api/vendor/orders/${encodeURIComponent(order.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ action: options.action, vehicleId: options.vehicleId, driverId: options.driverId, deliveryOtp: options.deliveryOtp, status: order.status, eta: order.eta, vendorLatitude: order.vendorLatitude, vendorLongitude: order.vendorLongitude }) });
+  const response = await fetch(`${API_BASE_URL}/api/vendor/orders/${encodeURIComponent(order.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ action: options.action, vehicleId: options.vehicleId, driverId: options.driverId, deliveryOtp: options.deliveryOtp, rejectionReason: options.rejectionReason, status: order.status, eta: order.eta, vendorLatitude: order.vendorLatitude, vendorLongitude: order.vendorLongitude }) });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { message?: string };
     throw new Error(payload.message || 'Unable to update vendor order.');

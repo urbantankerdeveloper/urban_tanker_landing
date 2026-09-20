@@ -1,5 +1,5 @@
 import { getDatabase } from './connection.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 
 const collections = {
   users: {
@@ -100,6 +100,22 @@ const collections = {
       },
     },
   },
+  order_history: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['order_id', 'client_id', 'status', 'timestamp'],
+      properties: {
+        order_id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        status: { bsonType: 'string' },
+        timestamp: { bsonType: 'date' },
+        actor_uid: { bsonType: 'string' },
+        actor_role: { enum: ['customer', 'vendor', 'admin'] },
+        vendor_uid: { bsonType: 'string' },
+        rejection_reason: { bsonType: 'string' },
+      },
+    },
+  },
   content: {
     $jsonSchema: {
       bsonType: 'object',
@@ -176,6 +192,39 @@ const initDatabase = async () => {
     await db.collection('users').createIndex({ created_at: -1 }, { name: 'created_at_desc' });
     await db.collection('orders').createIndex({ client_id: 1, owner_uid: 1, created: -1 }, { name: 'customer_orders' });
     await db.collection('orders').createIndex({ client_id: 1, status: 1, assigned_vendor_uid: 1 }, { name: 'dispatch_queue' });
+    const duplicateOrders = await db.collection('orders').aggregate([
+      { $group: { _id: { client_id: '$client_id', id: '$id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+    ]).toArray();
+    for (const duplicate of duplicateOrders) {
+      const records = await db.collection('orders').find({ client_id: duplicate._id.client_id, id: duplicate._id.id }).sort({ updated_at: -1, _id: -1 }).toArray();
+      const keeper = records[0];
+      const statusHistory = records.flatMap(record => record.statusHistory || []).sort((first, second) => new Date(first.timestamp).valueOf() - new Date(second.timestamp).valueOf());
+      const rejectedVendorUids = Array.from(new Set(records.flatMap(record => record.rejectedVendorUids || [])));
+      await db.collection('orders').updateOne({ _id: keeper._id }, { $set: { statusHistory, rejectedVendorUids, updated_at: new Date() } });
+      await db.collection('orders').deleteMany({ _id: { $in: records.slice(1).map(record => record._id) } });
+    }
+    await db.collection('orders').createIndex({ client_id: 1, id: 1 }, { unique: true, name: 'client_order_id_unique' });
+    await db.collection('order_history').createIndex({ client_id: 1, order_id: 1, timestamp: 1 }, { name: 'order_history_timeline' });
+    const ordersForHistory = await db.collection('orders').find({}, { projection: { _id: 0, id: 1, client_id: 1, status: 1, owner_uid: 1, statusHistory: 1, created: 1 } }).toArray();
+    for (const order of ordersForHistory) {
+      if (await db.collection('order_history').countDocuments({ client_id: order.client_id, order_id: order.id })) continue;
+      const events = order.statusHistory?.length ? order.statusHistory : [{ status: order.status, timestamp: order.created, actorUid: order.owner_uid, actorRole: 'customer' }];
+      await db.collection('order_history').insertMany(events.map(event => ({ order_id: order.id, client_id: order.client_id, status: event.status, timestamp: new Date(event.timestamp), ...(event.actorUid ? { actor_uid: event.actorUid } : {}), ...(event.actorRole ? { actor_role: event.actorRole } : {}) })));
+    }
+    const ordersNeedingOtp = await db.collection('orders').find({
+      status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] },
+      $or: [{ customerDeliveryOtp: { $exists: false } }, { deliveryOtpHash: { $exists: false } }],
+    }, { projection: { _id: 1, customerDeliveryOtp: 1 } }).toArray();
+    for (const order of ordersNeedingOtp) {
+      const deliveryOtp = typeof order.customerDeliveryOtp === 'string' && /^\d{6}$/.test(order.customerDeliveryOtp)
+        ? order.customerDeliveryOtp
+        : String(randomInt(100000, 1000000));
+      await db.collection('orders').updateOne(
+        { _id: order._id },
+        { $set: { customerDeliveryOtp: deliveryOtp, deliveryOtpHash: createHash('sha256').update(deliveryOtp).digest('hex') } },
+      );
+    }
     await db.collection('vendors').createIndex({ client_id: 1, uid: 1 }, { unique: true, name: 'client_vendor_unique' });
     await db.collection('vendors').createIndex({ client_id: 1, available: 1 }, { name: 'available_vendors' });
     await db.collection('vendors').createIndex({ client_id: 1, status: 1 }, { name: 'vendor_status' });

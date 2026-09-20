@@ -5,7 +5,7 @@ import compression from 'compression';
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
-import { closeConnection, contentCollection, driversCollection, ordersCollection, sessionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import { closeConnection, contentCollection, driversCollection, orderHistoryCollection, ordersCollection, sessionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import Razorpay from 'razorpay';
 import { hashPassword, hashToken } from './utils/auth.js';
@@ -30,7 +30,7 @@ io.use(async (socket, next) => {
   try {
     const token = typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : '';
     const user = token ? verifyToken(token) as Record<string, any> | null : null;
-    if (!user?.uid || !['vendor', 'customer'].includes(user.role)) return next(new Error('Authenticated customer or vendor access is required.'));
+    if (!user?.uid || !['vendor', 'customer', 'admin'].includes(user.role)) return next(new Error('Authenticated access is required.'));
     const clientId = user.clientId || socket.handshake.auth?.clientId || 'urban-tanker';
     const session = await sessionsCollection.findOne({ token_hash: hashToken(token), client_id: clientId, uid: user.uid, role: user.role, expires_at: { $gt: new Date() } });
     if (!session) return next(new Error('Session expired.'));
@@ -44,6 +44,7 @@ io.use(async (socket, next) => {
 io.on('connection', socket => {
   if (socket.data.user.role === 'vendor') socket.join(`vendor:${socket.data.user.clientId}`);
   if (socket.data.user.role === 'customer') socket.join(`customer:${socket.data.user.uid}`);
+  if (socket.data.user.role === 'admin') socket.join(`admin:${socket.data.user.clientId}`);
 });
 
 async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: Record<string, any>): Promise<void> {
@@ -66,6 +67,19 @@ async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: R
 function removeDeliveryOtpFields<T extends Record<string, any>>(order: T): Omit<T, 'customerDeliveryOtp' | 'deliveryOtpHash'> {
   const { customerDeliveryOtp, deliveryOtpHash, ...safeOrder } = order;
   return safeOrder;
+}
+
+async function recordOrderHistory(order: Record<string, any>, event: { status: string; actorUid?: string; actorRole?: string; vendorUid?: string; rejectionReason?: string }): Promise<void> {
+  await orderHistoryCollection.insertOne({
+    order_id: order.id,
+    client_id: order.client_id,
+    status: event.status,
+    timestamp: new Date(),
+    ...(event.actorUid ? { actor_uid: event.actorUid } : {}),
+    ...(event.actorRole ? { actor_role: event.actorRole } : {}),
+    ...(event.vendorUid ? { vendor_uid: event.vendorUid } : {}),
+    ...(event.rejectionReason ? { rejection_reason: event.rejectionReason } : {}),
+  });
 }
 
 function distanceKm(firstLatitude, firstLongitude, secondLatitude, secondLongitude) {
@@ -246,7 +260,7 @@ app.post('/api/admin/orders/:orderId/notify-vendors', authenticateToken, async (
       assigned_vendor_uid: { $exists: false },
     }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } });
     if (!order) return res.status(404).json({ message: 'Only pending, unassigned orders can be sent to vendors.' });
-    io.to(`vendor:${req.user.clientId}`).emit('order:created', removeDeliveryOtpFields(order));
+    io.to(`vendor:${req.user.clientId}`).emit('order:created', { ...removeDeliveryOtpFields(order), excludedVendorUids: order.rejectedVendorUids || [] });
     res.json({ orderId: order.id, notified: true });
   } catch (error) {
     console.error('Vendor notification retry error:', error);
@@ -331,7 +345,12 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     const update: Record<string, any> = { $set: order, $setOnInsert: setOnInsert };
     if (existing && existing.status !== order.status) update.$push = { statusHistory: { status: order.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } };
     await ordersCollection.updateOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, update, { upsert: true });
-    if (!existing) io.to(`vendor:${req.user.clientId}`).emit('order:created', removeDeliveryOtpFields(order));
+    if (!existing) {
+      await Promise.all(statusHistory.map(event => recordOrderHistory(order, { status: event.status, actorUid: req.user.uid, actorRole: req.user.role })));
+      io.to(`vendor:${req.user.clientId}`).emit('order:created', removeDeliveryOtpFields(order));
+    } else if (existing.status !== order.status) {
+      await recordOrderHistory(order, { status: order.status, actorUid: req.user.uid, actorRole: req.user.role });
+    }
     res.status(200).json({ id: order.id });
   } catch (error) {
     console.error('Order persistence error:', error);
@@ -423,6 +442,7 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       update.status = 'Rejected';
       update.vendorDecision = 'rejected';
       update.vendorRejectedAt = new Date();
+      update.vendorRejectionReason = String(req.body.rejectionReason || 'Vendor declined the assignment.').trim().slice(0, 500);
     } else if (allowedStatuses.includes(req.body.status)) update.status = req.body.status;
     if (typeof req.body.eta === 'string') update.eta = req.body.eta;
     if (typeof req.body.vendorLatitude === 'number') update.vendorLatitude = req.body.vendorLatitude;
@@ -454,9 +474,11 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       return res.status(404).json({ message: 'Vendor order was not found for this tenant or vendor.' });
     }
     const updateDocument: Record<string, any> = { $set: update };
-    if (update.status && existing.status !== update.status) updateDocument.$push = { statusHistory: { status: update.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } };
+    if (update.status && existing.status !== update.status) updateDocument.$push = { statusHistory: { status: update.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role, ...(action === 'reject' ? { vendorUid: req.user.uid, rejectionReason: update.vendorRejectionReason } : {}) } };
+    if (action === 'reject') updateDocument.$addToSet = { rejectedVendorUids: req.user.uid };
     const result = await ordersCollection.updateOne(orderFilter, updateDocument);
     if (!result.matchedCount) return res.status(404).json({ message: 'Vendor order was not found.' });
+    await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: update.status || existing.status, actorUid: req.user.uid, actorRole: req.user.role, ...(action === 'reject' ? { vendorUid: req.user.uid, rejectionReason: update.vendorRejectionReason } : {}) });
     if (action === 'accept') {
       const customer = existing.customerEmail || existing.customerPhone ? existing : await usersCollection.findOne(
         { uid: existing.owner_uid, client_id: req.user.clientId, role: 'customer' },
@@ -474,6 +496,7 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
     } else if (action === 'reject') {
       io.to(`vendor:${req.user.clientId}`).emit('order:rejected', { orderId: req.params.orderId, vendorUid: req.user.uid });
     }
+    if (update.status === 'Delivered') io.to(`admin:${req.user.clientId}`).emit('order:delivered', { orderId: req.params.orderId, vendorName: req.user.displayName || 'Vendor' });
     res.json(removeDeliveryOtpFields({ id: req.params.orderId, ...update }));
   } catch (error) {
     console.error('Vendor order update error:', error);

@@ -117,6 +117,97 @@
 	color: var(--ink);
 	font-size: 12px;
 }
+.admin-delivery-notifications {
+	position: fixed;
+	right: 24px;
+	bottom: 24px;
+	z-index: 40;
+	display: flex;
+	flex-direction: column-reverse;
+	align-items: flex-end;
+	gap: 12px;
+	max-width: min(390px, calc(100vw - 32px));
+}
+
+.admin-delivery-notification {
+	position: relative;
+	width: min(360px, calc(100vw - 32px));
+	padding: 20px 48px 18px 20px;
+	background: var(--white);
+	border: 1px solid #b8d4d1;
+	border-left: 4px solid var(--aqua);
+	border-radius: 12px;
+	box-shadow: 0 16px 36px rgb(15 62 66 / 18%);
+	animation: delivery-notification-in 260ms ease-out both;
+}
+
+.admin-delivery-notification h3 {
+	margin: 5px 0;
+	font-size: 17px;
+}
+
+.admin-delivery-notification p {
+	margin: 0 0 14px;
+	color: var(--muted);
+	font-size: 13px;
+}
+
+.admin-delivery-notification-close {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	color: var(--muted);
+	background: #edf5f3;
+	border: 0;
+	border-radius: 50%;
+	cursor: pointer;
+}
+
+body:has(.modal-backdrop),
+body:has([role="dialog"]) {
+	overflow: hidden;
+}
+
+.customer-contact-details {
+	display: grid;
+	gap: 13px;
+	margin-top: 20px;
+}
+
+.customer-contact-details div {
+	display: grid;
+	gap: 3px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid #dce9e7;
+}
+
+.customer-contact-details span {
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: .08em;
+}
+
+.customer-contact-details b {
+	font-size: 14px;
+}
+
+@keyframes delivery-notification-in {
+	from {
+		opacity: 0;
+		transform: translateY(18px);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 /* Keep admin table actions aligned without letting the search field collapse. */
 .table-tools {

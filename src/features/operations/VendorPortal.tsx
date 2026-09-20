@@ -6,6 +6,7 @@ import {
     Package,
     Phone,
     ShieldCheck,
+    X,
 } from "lucide-react";
 import type { AppData, Order, OrderStatus, Vehicle, Workspace } from "../../shared/lib/types";
 import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui";
@@ -16,7 +17,7 @@ import { createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVe
 import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "react";
 import { io, type Socket } from "socket.io-client";
 import { API_BASE_URL } from "../../shared/lib/apiConfig";
-import { getAuthToken } from "../../features/auth/auth";
+import { getAuthToken, getCurrentUser } from "../../features/auth/auth";
 
 const stages: OrderStatus[] = [
     "Created",
@@ -48,6 +49,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const [acceptSelectionOpen, setAcceptSelectionOpen] = useState(false);
     const [acceptVehicleId, setAcceptVehicleId] = useState("");
     const [acceptDriverId, setAcceptDriverId] = useState("");
+    const [customerContactOpen, setCustomerContactOpen] = useState(false);
     const incomingOrderRef = useRef<Order | null>(null);
     useEffect(() => {
         if (navigator.geolocation) {
@@ -83,7 +85,9 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         if (!token) return undefined;
         const socket: Socket = io(API_BASE_URL, { auth: { token }, transports: ["websocket", "polling"] });
 
-        const created = (order: Order) => {
+        const created = (order: Order & { excludedVendorUids?: string[] }) => {
+            const currentUser = getCurrentUser();
+            if (currentUser?.uid && order.excludedVendorUids?.includes(currentUser.uid)) return;
             incomingOrderRef.current = order;
             setIncomingOrder(order);
             setIncomingOrderState("pending");
@@ -234,9 +238,11 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     };
     const rejectIncomingOrder = async () => {
         if (!incomingOrder || incomingBusy) return;
+        const rejectionReason = window.prompt("Why are you rejecting this order?", "Vehicle or driver unavailable")?.trim();
+        if (rejectionReason === undefined) return;
         setIncomingBusy(true);
         try {
-            await updateVendorOrder({ ...incomingOrder, status: "Rejected" }, { action: "reject" });
+            await updateVendorOrder({ ...incomingOrder, status: "Rejected" }, { action: "reject", rejectionReason: rejectionReason || "Vendor declined the assignment." });
             setIncomingOrder(null);
             document.title = "Urban Tanker | Operations, simplified";
         } catch { onNotify("Unable to reject this order."); } finally { setIncomingBusy(false); }
@@ -275,6 +281,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                 />
             )}
             {incomingOrder && <VendorOrderAlert order={incomingOrder} state={incomingOrderState} busy={incomingBusy} onAccept={openAcceptSelection} onReject={() => void rejectIncomingOrder()} onClose={() => setIncomingOrder(null)} />}
+            {customerContactOpen && order && <CustomerContactModal order={order} onClose={() => setCustomerContactOpen(false)} />}
             <PageHeader
                 eyebrow={`Vendor portal · ${vendorName}`}
                 title="Keep every delivery moving."
@@ -352,7 +359,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                                 <Button
                                     variant="quiet"
                                     icon={Phone}
-                                    onClick={() => onNotify("Calling customer...")}
+                                    onClick={() => setCustomerContactOpen(true)}
                                 >
                                     Call customer
                                 </Button>
@@ -404,6 +411,10 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             </div>
         </>
     );
+}
+
+function CustomerContactModal({ order, onClose }: { order: Order; onClose: () => void }) {
+    return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal customer-contact-modal" role="dialog" aria-modal="true" aria-labelledby="customer-contact-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close customer information"><X size={18} /></button><span className="eyebrow">Customer details</span><h2 id="customer-contact-title">{order.customer || "Customer"}</h2><div className="customer-contact-details"><div><span>Order</span><b className="mono">{order.id}</b></div><div><span>Phone</span><b>{order.customerPhone || "No phone number available"}</b></div><div><span>Delivery address</span><b>{order.address || "No address available"}</b></div><div><span>Service</span><b>{order.service} · {order.capacity}</b></div></div><div className="heading-actions"><Button variant="primary" onClick={onClose}>OK</Button></div></section></div>;
 }
 
 function VendorOrderAlert({ order, state, busy, onAccept, onReject, onClose }: { order: Order; state: "pending" | "accepted" | "rejected"; busy: boolean; onAccept: () => void; onReject: () => void; onClose: () => void }) {

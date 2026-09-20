@@ -1,2 +1,2 @@
-export { AdminDashboard } from './AdminDashboard';
+export { AdminDashboard, AdminDeliveryNotifications } from './AdminDashboard';
 export { VendorPortal } from './VendorPortal';

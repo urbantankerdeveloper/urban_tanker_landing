@@ -31,6 +31,7 @@ export async function getDatabase() {
 export const usersCollection = (await databasePromise).collection<any>('users');
 export const sessionsCollection = (await databasePromise).collection<any>('sessions');
 export const ordersCollection = (await databasePromise).collection<any>('orders');
+export const orderHistoryCollection = (await databasePromise).collection<any>('order_history');
 export const vendorsCollection = (await databasePromise).collection<any>('vendors');
 export const driversCollection = (await databasePromise).collection<any>('drivers');
 export const vehiclesCollection = (await databasePromise).collection<any>('vehicles');

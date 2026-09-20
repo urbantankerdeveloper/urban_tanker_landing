@@ -54,6 +54,8 @@ export interface Order {
   vendorDecision?: 'pending' | 'accepted' | 'rejected';
   vendorAcceptedAt?: string;
   vendorRejectedAt?: string;
+  vendorRejectionReason?: string;
+  rejectedVendorUids?: string[];
   customerDeliveryOtp?: string;
   otpVerifiedAt?: string;
   lastLocationUpdatedAt?: string;
@@ -66,7 +68,7 @@ export interface Order {
   driverId?: string;
   driverPhone?: string;
   driverActive?: boolean;
-  statusHistory?: Array<{ status: OrderStatus; timestamp: string; actorUid?: string; actorRole?: Role }>;
+  statusHistory?: Array<{ status: OrderStatus; timestamp: string; actorUid?: string; actorRole?: Role; vendorUid?: string; rejectionReason?: string }>;
 }
 
 export interface Vendor {

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { AppShell } from '../shared/components/AppShell';
-import { AdminDashboard, VendorPortal } from '../features/operations';
+import { AdminDashboard, AdminDeliveryNotifications, VendorPortal } from '../features/operations';
 import { AuthScreen } from '../features/auth/AuthScreen';
 import { CheckoutModal } from '../features/checkout/CheckoutModal';
 import { CustomerPortal, CustomerHomeShell } from '../features/customer';
@@ -79,7 +79,7 @@ export function App() {
   return <>
     <AppShell role={data.role} active={active} orderCount={data.orders.length} mobileNav={mobileNav} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
       {data.role === 'vendor' && <VendorPortal view={active} />}
-      {data.role === 'admin' && <AdminDashboard view={active} />}
+      {data.role === 'admin' && <><AdminDeliveryNotifications /><AdminDashboard view={active} /></>}
     </AppShell>
     <Toast message={toast} onClose={dismissToast} />
     {checkoutOpen && <CheckoutModal />}

@@ -1,15 +1,39 @@
-import { Check, Gauge, IndianRupee, Package, Plus, RefreshCcw, Search, ShieldCheck, Truck, UserRound, Users, WalletCards, MapPin, MessageSquare } from 'lucide-react';
+import { Check, Gauge, IndianRupee, Package, Plus, RefreshCcw, Search, ShieldCheck, Truck, UserRound, Users, WalletCards, MapPin, MessageSquare, X } from 'lucide-react';
 import { money } from '../../shared/data/demo';
 import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { createAdminAccount, loadAdminDashboard, notifyVendorsOfOrder, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData } from '../../shared/lib/cloudStore';
+import { contentClientId, createAdminAccount, loadAdminDashboard, loadContent, notifyVendorsOfOrder, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData } from '../../shared/lib/cloudStore';
+import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
+import { io } from 'socket.io-client';
+import { API_BASE_URL } from '../../shared/lib/apiConfig';
+import { getAuthToken } from '../../features/auth/auth';
 
 const buildCsvReport = (headers: string[], rows: Array<Array<string | number | undefined>>) =>
   [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+
+type DeliveryNotification = { id: string; orderId: string; vendorName: string };
+
+export function AdminDeliveryNotifications() {
+  const [notifications, setNotifications] = useState<DeliveryNotification[]>([]);
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) return undefined;
+    const socket = io(API_BASE_URL, { auth: { token }, transports: ['websocket', 'polling'] });
+    const handleDelivered = (event: { orderId: string; vendorName: string }) => {
+      const notification = { ...event, id: `${event.orderId}-${Date.now()}` };
+      setNotifications(current => [notification, ...current].slice(0, 6));
+      window.setTimeout(() => setNotifications(current => current.filter(item => item.id !== notification.id)), 15_000);
+    };
+    socket.on('order:delivered', handleDelivered);
+    return () => { socket.disconnect(); };
+  }, []);
+  const dismiss = (id: string) => setNotifications(current => current.filter(item => item.id !== id));
+  return <div className="admin-delivery-notifications" aria-live="polite">{notifications.map(notification => <aside className="admin-delivery-notification" key={notification.id} role="status"><button className="admin-delivery-notification-close" type="button" onClick={() => dismiss(notification.id)} aria-label="Close delivery notification"><X size={17} /></button><span className="eyebrow">Delivery update</span><h3>Order delivered</h3><p><b className="mono">{notification.orderId}</b> was delivered by <strong>{notification.vendorName}</strong>.</p><Button variant="primary" onClick={() => dismiss(notification.id)}>OK</Button></aside>)}</div>;
+}
 
 export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const { data, adminQuery, setAdminQuery, notify, update } = useAppStore();
@@ -18,11 +42,23 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const [dashboard, setDashboard] = useState<AdminDashboardData | null>(null);
   const [ordersPage, setOrdersPage] = useState(1);
   const [notifyingOrderId, setNotifyingOrderId] = useState<string | null>(null);
-  useEffect(() => {
-    void loadAdminDashboard().then(result => {
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshDashboard = async (showMessage = false) => {
+    setRefreshing(true);
+    try {
+      const [result, content] = await Promise.all([loadAdminDashboard(), loadContent(contentClientId)]);
       setDashboard(result);
       useAppStore.setState(state => ({ data: { ...state.data, orders: result.orders, vendors: result.vendors } }));
-    }).catch(error => notify(error instanceof Error ? error.message : 'Unable to load admin dashboard data.'));
+      hydrateContent(content);
+      if (showMessage) notify('Dashboard and content refreshed.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to refresh dashboard data.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  useEffect(() => {
+    void refreshDashboard();
   }, [notify]);
   const filteredOrders = data.orders.filter(order => `${order.id} ${order.customer} ${order.address}`.toLowerCase().includes(adminQuery.toLowerCase()));
   const pagedOrders = filteredOrders.slice((ordersPage - 1) * 10, ordersPage * 10);
@@ -95,7 +131,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   if (view === 'book') return <AdminBookingView onNotify={notify} />;
 
   return <>
-    <PageHeader eyebrow="Network intelligence · September 2026" title="Welcome back, Admin." copy="Monitor bookings, operations, revenue, and tanker activity across Chennai." action={<div className="heading-actions"><Button variant="quiet" icon={RefreshCcw} onClick={() => notify('Operations dashboard refreshed')}>Refresh</Button><Button variant="primary" icon={Plus} onClick={() => setBookingOpen(true)}>Create test order</Button></div>} />
+    <PageHeader eyebrow="Network intelligence · September 2026" title="Welcome back, Admin." copy="Monitor bookings, operations, revenue, and tanker activity across Chennai." action={<div className="heading-actions"><Button variant="quiet" icon={RefreshCcw} onClick={() => void refreshDashboard(true)} disabled={refreshing}>{refreshing ? 'Refreshing...' : 'Refresh'}</Button><Button variant="primary" icon={Plus} onClick={() => setBookingOpen(true)}>Create test order</Button></div>} />
     <section className="admin-kpis admin-kpis-compact" aria-label="Network performance"><StatCard icon={IndianRupee} label="Revenue this month" value={money(revenue)} detail="MongoDB orders" tone="highlight" /><StatCard icon={Check} label="Delivered" value={delivered} detail="Tenant orders" /><StatCard icon={Truck} label="Live tankers" value={dashboard?.activeDeliveries ?? 0} detail="Active deliveries" /><StatCard icon={Gauge} label="Fleet utilisation" value={`${dashboard?.activeVendors ?? 0}/${dashboard?.vendors.length ?? data.vendors.length}`} detail="Active vendors" /></section>
     <section className="admin-kpis admin-kpis-compact secondary" aria-label="Network totals"><StatCard icon={Package} label="Total orders" value={data.orders.length} detail="MongoDB orders" /><StatCard icon={Users} label="Active vendors" value={dashboard?.activeVendors ?? 0} detail="Active status" /><StatCard icon={UserRound} label="Customers" value={dashboard?.customers.length ?? 0} detail="MongoDB customers" /><StatCard icon={WalletCards} label="Platform commission" value={money(Math.round(revenue * .1))} detail="10% of revenue" /></section>
     <div className="admin-grid"><article className="data-surface chart-surface"><div className="section-heading"><div><span className="eyebrow">Order performance · daily flow</span><h2>Water vs sewage orders</h2></div><div className="segmented" role="group" aria-label="Order period"><button className="active" type="button">7 days</button><button type="button">30 days</button><button type="button">90 days</button></div></div><div className="chart" aria-label="Bar chart showing weekly orders">{chart.map((day, index) => <div className="bar-group" key={`${day.label}-${index}`}><div className="bars"><i style={{ height: `${Math.max(day.water * 20, 3)}%` }} /><i style={{ height: `${Math.max(day.sewage * 20, 3)}%` }} /></div><small>{day.label}</small></div>)}</div><div className="chart-legend"><span><i className="water" /> Water tanker</span><span><i className="sewage" /> Sewage tanker</span><b>MongoDB order activity</b></div></article><article className="data-surface"><div className="section-heading"><div><span className="eyebrow">Fleet radar · live</span><h2>Tanker movement</h2></div><Status>{liveTankers.length ? 'Live' : 'Idle'}</Status></div><div className="radar" aria-label={`${liveTankers.length} active deliveries`}>{liveTankers.slice(0, 6).map(({ order, vendor }, index) => <button className={`radar-tanker tanker-${(index % 6) + 1}`} key={order.id} title={`View ${order.id} delivery`} aria-label={`View ${order.id} delivery`} onClick={() => setSelectedTanker({ order, vendor: vendor! })}><Truck size={13} /></button>)}<span className="radar-sweep" /><span className="radar-circle c1" /><span className="radar-circle c2" /><b>UT</b></div><div className="radar-summary"><strong>{liveTankers.length}</strong><span>live deliveries in movement</span></div></article></div>
