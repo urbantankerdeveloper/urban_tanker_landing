@@ -97,6 +97,26 @@
 	align-items: center;
 	gap: 10px;
 }
+.pagination {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 16px;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.pagination-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.pagination-actions b {
+	color: var(--ink);
+	font-size: 12px;
+}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 /* Keep admin table actions aligned without letting the search field collapse. */
 .table-tools {

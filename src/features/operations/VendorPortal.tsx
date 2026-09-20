@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { AppData, Order, OrderStatus, Vehicle, Workspace } from "../../shared/lib/types";
 import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui";
+import { Pagination } from "../../shared/components/Pagination";
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
 import { createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorVehicles, setVendorAvailability, setVendorDriverActive, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
@@ -433,15 +434,17 @@ function VehicleFleetView({ vehicles, setVehicles, onNotify }: { vehicles: Vehic
 }
 
 function VendorOrdersView({ orders }: { orders: AppData["orders"] }) {
+    const [page, setPage] = useState(1);
+    const visibleOrders = orders.slice((page - 1) * 10, page * 10);
     return <>
         <PageHeader eyebrow="Vendor workspace · Orders" title="Your assigned orders." copy="Review active and completed jobs assigned to your vendor account." />
         <div className="order-list">
-            {orders.length ? orders.map(order => <article className="order-row" key={order.id}>
+            {orders.length ? visibleOrders.map(order => <article className="order-row" key={order.id}>
                 <div className="order-service-icon"><Package size={19} /></div>
                 <div className="order-main"><div><b>{order.service}</b><Status>{order.status}</Status></div><span>{order.id} · {order.capacity} · {order.address}</span><small>{order.customer}</small></div>
                 <div className="order-amount"><strong>{money(order.amount)}</strong><span>{order.payment}</span></div>
             </article>) : <div className="empty-state"><Package size={28} /><h3>No assigned orders</h3><p>New assignments will appear here when dispatch assigns a job.</p></div>}
-        </div>
+        </div><Pagination page={page} pageSize={10} total={orders.length} onPageChange={setPage} />
     </>;
 }
 

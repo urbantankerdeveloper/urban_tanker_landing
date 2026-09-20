@@ -235,6 +235,24 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
   }
 });
 
+app.post('/api/admin/orders/:orderId/notify-vendors', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const order = await ordersCollection.findOne({
+      id: req.params.orderId,
+      client_id: req.user.clientId,
+      status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] },
+      assigned_vendor_uid: { $exists: false },
+    }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } });
+    if (!order) return res.status(404).json({ message: 'Only pending, unassigned orders can be sent to vendors.' });
+    io.to(`vendor:${req.user.clientId}`).emit('order:created', removeDeliveryOtpFields(order));
+    res.json({ orderId: order.id, notified: true });
+  } catch (error) {
+    console.error('Vendor notification retry error:', error);
+    res.status(500).json({ message: 'Unable to notify vendors about this order.' });
+  }
+});
+
 app.post('/api/admin/users', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });

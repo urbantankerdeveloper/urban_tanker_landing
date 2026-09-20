@@ -190,6 +190,14 @@ export async function loadAdminDashboard(): Promise<AdminDashboardData> {
   return await response.json() as AdminDashboardData;
 }
 
+export async function notifyVendorsOfOrder(orderId: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/notify-vendors`, { method: 'POST', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to notify vendors.');
+}
+
 export async function createAdminAccount(input: AdminAccountInput): Promise<{ uid: string; role: AdminAccountInput['role']; name: string; email: string; phone: string; status: string; available: boolean }> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
