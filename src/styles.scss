@@ -36,32 +36,33 @@
 					position: relative;
 				}
 		
-				.notification-popover {
+								.notification-toast-stack {
 					position: absolute;
 					top: calc(100% + 12px);
 					right: 0;
 					z-index: 60;
-					width: min(350px, calc(100vw - 32px));
-					padding: 14px;
-					background: var(--white);
-					border: 1px solid var(--line);
-					border-radius: 12px;
-					box-shadow: 0 16px 35px rgb(18 52 58 / 16%);
+					display: grid;
+						gap: 8px;
+						width: min(340px, calc(100vw - 32px));
 				}
-		
-				.notification-popover-head {
+
+								.notification-toast-head {
 					display: flex;
 					align-items: center;
 					justify-content: space-between;
-					padding-bottom: 10px;
-					border-bottom: 1px solid var(--line);
+					padding: 9px 12px;
+						color: var(--ink);
+						background: var(--white);
+						border: 1px solid var(--line);
+						border-radius: 9px;
+						box-shadow: 0 8px 20px rgb(18 52 58 / 10%);
 				}
 		
-				.notification-popover-head strong {
+								.notification-toast-head strong {
 					font-size: 13px;
 				}
 		
-				.notification-popover-head button {
+								.notification-toast-head button {
 					display: grid;
 					place-items: center;
 					width: 25px;
@@ -73,38 +74,45 @@
 					border-radius: 50%;
 				}
 		
-				.notification-list {
+								.notification-toast-list {
 					display: grid;
-					gap: 2px;
+					gap: 8px;
 					max-height: 320px;
 					overflow-y: auto;
 				}
 		
-				.notification-list article {
+								.notification-toast {
 					display: flex;
 					gap: 9px;
 					align-items: flex-start;
-					padding: 11px 4px;
-					border-bottom: 1px solid #edf2f0;
+					padding: 12px 13px;
+						background: var(--white);
+						border: 1px solid var(--line);
+						border-left: 3px solid var(--aqua);
+						border-radius: 9px;
+						box-shadow: 0 10px 24px rgb(18 52 58 / 12%);
+						animation: toast-in-right .22s ease both;
 				}
 		
-				.notification-list article:last-child {
-					border-bottom: 0;
-				}
-		
-				.notification-list article div {
+								.notification-toast div {
 					min-width: 0;
 				}
 		
-				.notification-list b {
+								.notification-toast b {
 					display: block;
 					font-size: 11px;
 				}
 		
-				.notification-list p {
+								.notification-toast p {
 					margin: 3px 0 0;
 					color: var(--muted);
 					font-size: 10px;
+				}
+								.notification-toast time {
+					display: block;
+					margin-top: 4px;
+					color: #99a8a7;
+					font: 9px 'DM Mono', monospace;
 				}
 		
 				.notification-dot {

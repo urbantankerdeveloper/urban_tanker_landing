@@ -4,12 +4,21 @@ import { useContent } from '../hooks/useContent';
 import { loadNotifications, type NotificationItem } from '../lib/cloudStore';
 import { useEffect, useState } from 'react';
 
+function notificationAge(timestamp?: string | Date): string {
+  if (!timestamp) return 'Just now';
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
+  if (elapsedSeconds < 60) return 'Just now';
+  if (elapsedSeconds < 3600) return `${Math.floor(elapsedSeconds / 60)}m ago`;
+  if (elapsedSeconds < 86400) return `${Math.floor(elapsedSeconds / 3600)}h ago`;
+  return `${Math.floor(elapsedSeconds / 86400)}d ago`;
+}
+
 export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, onToggleMobileNav, onNotify, onSignOut, children }) {
   const content = useContent();
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const refreshNotifications = () => loadNotifications().then(result => { setNotificationCount(result.unreadCount); setNotifications(result.notifications); }).catch(() => undefined);
+  const refreshNotifications = () => loadNotifications().then(result => { setNotificationCount(result.unreadCount); setNotifications([...result.notifications].sort((first, second) => new Date(second.timestamp || 0).getTime() - new Date(first.timestamp || 0).getTime())); }).catch(() => undefined);
   useEffect(() => {
     void refreshNotifications();
     const refreshTimer = window.setInterval(() => void refreshNotifications(), 30_000);
@@ -22,7 +31,7 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
       <div className="brand"><span className="brand-mark"><Droplets size={18} /></span><span>{content.brand.name}</span></div>
       <div className="topbar-context"><span className="live-dot" /> {content.brand.city} <ChevronDown size={14} /></div>
       <div className="topbar-search"><Search size={16} /><input placeholder={content.operations.searchPlaceholder} /></div>
-      <div className="topbar-actions"><div className="notification-menu"><button className="icon-button" type="button" aria-label={content.operations.notificationLabel} aria-expanded={notificationOpen} onClick={() => { setNotificationOpen(current => !current); void refreshNotifications(); }}><Bell size={18} />{notificationCount > 0 && <i>{notificationCount > 99 ? '99+' : notificationCount}</i>}</button>{notificationOpen && <section className="notification-popover" role="dialog" aria-label="Notifications"><div className="notification-popover-head"><strong>Notifications</strong><button type="button" onClick={() => setNotificationOpen(false)} aria-label="Close notifications">×</button></div>{notifications.length ? <div className="notification-list">{notifications.map(notification => <article key={`${notification.id}-${notification.status}`}><span className={`notification-dot notification-${notification.status.toLowerCase().replace(/\s+/g, '-')}`} /><div><b>{notification.title}</b><p>{notification.detail}</p></div></article>)}</div> : <p className="notification-empty">No new notifications.</p>}</section>}</div><UserBadge onClick={onSignOut} /></div>
+      <div className="topbar-actions"><div className="notification-menu"><button className="icon-button" type="button" aria-label={content.operations.notificationLabel} aria-expanded={notificationOpen} onClick={() => { setNotificationOpen(current => !current); void refreshNotifications(); }}><Bell size={18} />{notificationCount > 0 && <i>{notificationCount > 99 ? '99+' : notificationCount}</i>}</button>{notificationOpen && <section className="notification-toast-stack" role="dialog" aria-label="Notifications"><div className="notification-toast-head"><strong>Notifications</strong><button type="button" onClick={() => setNotificationOpen(false)} aria-label="Close notifications">×</button></div>{notifications.length ? <div className="notification-toast-list">{notifications.map(notification => <article className="notification-toast" key={`${notification.id}-${notification.status}`}><span className={`notification-dot notification-${notification.status.toLowerCase().replace(/\s+/g, '-')}`} /><div><b>{notification.title}</b><p>{notification.detail}</p><time>{notificationAge(notification.timestamp)}</time></div></article>)}</div> : <p className="notification-empty">No new notifications.</p>}</section>}</div><UserBadge onClick={onSignOut} /></div>
     </header>
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
       <div className="sidebar-role"><span className="eyebrow">{content.operations.workspaceLabel}</span><strong>{role === 'customer' ? content.operations.customerView : role === 'vendor' ? content.operations.vendorPortal : content.operations.adminCommandCentre}</strong></div>
