@@ -132,6 +132,39 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  try {
+    const baseFilter: Record<string, any> = { client_id: req.user.clientId };
+    if (req.user.role === 'customer') baseFilter.owner_uid = req.user.uid;
+    const orderFilter = req.user.role === 'vendor'
+      ? { ...baseFilter, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }
+      : req.user.role === 'admin'
+        ? baseFilter
+        : baseFilter;
+    const orders = await ordersCollection.find(orderFilter, { projection: { _id: 0, id: 1, status: 1, service: 1, customer: 1, vendor: 1, updated_at: 1, created: 1 } }).sort({ updated_at: -1, created: -1 }).limit(20).toArray();
+    const activeStatuses = ['Created', 'Pending acceptance', 'Vendor assigned', 'Accepted', 'Vendor accepted', 'En route', 'Arrived'];
+    const unreadCount = req.user.role === 'admin'
+      ? orders.filter(order => ['Created', 'Pending acceptance', 'Vendor assigned', 'Delivered'].includes(order.status)).length
+      : req.user.role === 'vendor'
+        ? orders.filter(order => ['Created', 'Pending acceptance', 'Vendor assigned'].includes(order.status)).length
+        : orders.filter(order => activeStatuses.includes(order.status)).length;
+    const notifications = orders.slice(0, 10).map(order => {
+      const subject = order.status === 'Delivered' ? 'Order delivered' : order.status === 'Rejected' ? 'Order rejected' : order.status === 'Accepted' || order.status === 'Vendor accepted' ? 'Order accepted' : order.status === 'Arrived' ? 'Order arrived' : 'Order awaiting action';
+      const detail = req.user.role === 'vendor'
+        ? `${order.service || 'Order'} · ${order.id}`
+        : req.user.role === 'customer'
+          ? `${order.service || 'Order'} is ${String(order.status).toLowerCase()}`
+          : `${order.id} · ${order.customer || order.vendor || 'Booking'}`;
+      return { id: order.id, title: subject, detail, status: order.status, timestamp: order.updated_at || order.created };
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json({ unreadCount, notifications });
+  } catch (error) {
+    console.error('Notifications lookup error:', error);
+    res.status(500).json({ message: 'Unable to load notifications.' });
+  }
+});
+
 app.get('/api/content/:clientId', async (req, res) => {
   try {
     const clientId = req.params.clientId;

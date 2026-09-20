@@ -1,9 +1,20 @@
 import { Bell, ChevronDown, Droplets, Menu, Search, Settings2, ShieldCheck } from 'lucide-react';
 import { UserBadge } from './ui';
 import { useContent } from '../hooks/useContent';
+import { loadNotifications, type NotificationItem } from '../lib/cloudStore';
+import { useEffect, useState } from 'react';
 
 export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, onToggleMobileNav, onNotify, onSignOut, children }) {
   const content = useContent();
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationCount, setNotificationCount] = useState(0);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const refreshNotifications = () => loadNotifications().then(result => { setNotificationCount(result.unreadCount); setNotifications(result.notifications); }).catch(() => undefined);
+  useEffect(() => {
+    void refreshNotifications();
+    const refreshTimer = window.setInterval(() => void refreshNotifications(), 30_000);
+    return () => window.clearInterval(refreshTimer);
+  }, [role]);
   const navItems = [['overview', content.operations.overview], ['book', content.operations.bookTanker], ['orders', content.operations.orders], ['track', content.operations.liveTracking], ...(role === 'vendor' ? [['fleet', 'Fleet']] : []), ...(role === 'admin' ? [['customers', 'Customers'], ['vendors', 'Vendors'], ['coupons', 'Coupons']] : []), ['support', content.operations.helpSupport]];
   return <div className={`app role-${role}`}>
     <header className="topbar">
@@ -11,7 +22,7 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
       <div className="brand"><span className="brand-mark"><Droplets size={18} /></span><span>{content.brand.name}</span></div>
       <div className="topbar-context"><span className="live-dot" /> {content.brand.city} <ChevronDown size={14} /></div>
       <div className="topbar-search"><Search size={16} /><input placeholder={content.operations.searchPlaceholder} /></div>
-      <div className="topbar-actions"><button className="icon-button" aria-label={content.operations.notificationLabel}><Bell size={18} /><i>3</i></button><UserBadge onClick={onSignOut} /></div>
+      <div className="topbar-actions"><div className="notification-menu"><button className="icon-button" type="button" aria-label={content.operations.notificationLabel} aria-expanded={notificationOpen} onClick={() => { setNotificationOpen(current => !current); void refreshNotifications(); }}><Bell size={18} />{notificationCount > 0 && <i>{notificationCount > 99 ? '99+' : notificationCount}</i>}</button>{notificationOpen && <section className="notification-popover" role="dialog" aria-label="Notifications"><div className="notification-popover-head"><strong>Notifications</strong><button type="button" onClick={() => setNotificationOpen(false)} aria-label="Close notifications">×</button></div>{notifications.length ? <div className="notification-list">{notifications.map(notification => <article key={`${notification.id}-${notification.status}`}><span className={`notification-dot notification-${notification.status.toLowerCase().replace(/\s+/g, '-')}`} /><div><b>{notification.title}</b><p>{notification.detail}</p></div></article>)}</div> : <p className="notification-empty">No new notifications.</p>}</section>}</div><UserBadge onClick={onSignOut} /></div>
     </header>
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
       <div className="sidebar-role"><span className="eyebrow">{content.operations.workspaceLabel}</span><strong>{role === 'customer' ? content.operations.customerView : role === 'vendor' ? content.operations.vendorPortal : content.operations.adminCommandCentre}</strong></div>

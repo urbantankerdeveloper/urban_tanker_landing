@@ -49,6 +49,22 @@ export async function loadContent(clientId: string): Promise<CloudState> {
   return await response.json() as CloudState;
 }
 
+export interface NotificationItem {
+  id: string;
+  title: string;
+  detail: string;
+  status: string;
+  timestamp?: string | Date;
+}
+
+export async function loadNotifications(): Promise<{ unreadCount: number; notifications: NotificationItem[] }> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/notifications`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
+  if (!response.ok) throw new Error('Unable to load notifications.');
+  return await response.json() as { unreadCount: number; notifications: NotificationItem[] };
+}
+
 export async function subscribeToCloudState(onState: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
   void readEncryptedState<CloudState>().then(({ value }) => onState(value || {})).catch(onError);
   return () => {};

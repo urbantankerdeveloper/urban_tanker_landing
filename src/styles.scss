@@ -32,6 +32,103 @@
 			overflow-y: auto;
 			overflow-x: hidden;
 }
+				.notification-menu {
+					position: relative;
+				}
+		
+				.notification-popover {
+					position: absolute;
+					top: calc(100% + 12px);
+					right: 0;
+					z-index: 60;
+					width: min(350px, calc(100vw - 32px));
+					padding: 14px;
+					background: var(--white);
+					border: 1px solid var(--line);
+					border-radius: 12px;
+					box-shadow: 0 16px 35px rgb(18 52 58 / 16%);
+				}
+		
+				.notification-popover-head {
+					display: flex;
+					align-items: center;
+					justify-content: space-between;
+					padding-bottom: 10px;
+					border-bottom: 1px solid var(--line);
+				}
+		
+				.notification-popover-head strong {
+					font-size: 13px;
+				}
+		
+				.notification-popover-head button {
+					display: grid;
+					place-items: center;
+					width: 25px;
+					height: 25px;
+					padding: 0;
+					color: var(--muted);
+					background: #edf5f3;
+					border: 0;
+					border-radius: 50%;
+				}
+		
+				.notification-list {
+					display: grid;
+					gap: 2px;
+					max-height: 320px;
+					overflow-y: auto;
+				}
+		
+				.notification-list article {
+					display: flex;
+					gap: 9px;
+					align-items: flex-start;
+					padding: 11px 4px;
+					border-bottom: 1px solid #edf2f0;
+				}
+		
+				.notification-list article:last-child {
+					border-bottom: 0;
+				}
+		
+				.notification-list article div {
+					min-width: 0;
+				}
+		
+				.notification-list b {
+					display: block;
+					font-size: 11px;
+				}
+		
+				.notification-list p {
+					margin: 3px 0 0;
+					color: var(--muted);
+					font-size: 10px;
+				}
+		
+				.notification-dot {
+					flex: 0 0 auto;
+					width: 8px;
+					height: 8px;
+					margin-top: 4px;
+					background: var(--aqua);
+					border-radius: 50%;
+				}
+		
+				.notification-delivered {
+					background: var(--green);
+				}
+		
+				.notification-rejected {
+					background: var(--coral);
+				}
+		
+				.notification-empty {
+					margin: 14px 3px 3px;
+					color: var(--muted);
+					font-size: 11px;
+				}
 .vendor-order-tabs {
 	margin-bottom: 18px;
 }
