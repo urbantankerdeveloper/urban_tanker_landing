@@ -420,7 +420,14 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
     if (!Object.keys(update).length) return res.status(400).json({ message: 'No valid order update was provided.' });
     const orderFilter = action === 'accept'
       ? { id: req.params.orderId, client_id: req.user.clientId, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }
-      : { id: req.params.orderId, client_id: req.user.clientId, assigned_vendor_uid: req.user.uid };
+      : {
+          id: req.params.orderId,
+          client_id: req.user.clientId,
+          $or: [
+            { assigned_vendor_uid: req.user.uid },
+            { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } },
+          ],
+        };
     const existing = await ordersCollection.findOne(orderFilter, { projection: { _id: 0, status: 1, owner_uid: 1, customerEmail: 1, customerPhone: 1 } });
     if (!existing) {
       const orderExists = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { assigned_vendor_uid: 1, status: 1 } });

@@ -44,6 +44,9 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const [incomingOrder, setIncomingOrder] = useState<Order | null>(null);
     const [incomingOrderState, setIncomingOrderState] = useState<"pending" | "accepted" | "rejected">("pending");
     const [incomingBusy, setIncomingBusy] = useState(false);
+    const [acceptSelectionOpen, setAcceptSelectionOpen] = useState(false);
+    const [acceptVehicleId, setAcceptVehicleId] = useState("");
+    const [acceptDriverId, setAcceptDriverId] = useState("");
     const incomingOrderRef = useRef<Order | null>(null);
     useEffect(() => {
         if (navigator.geolocation) {
@@ -64,7 +67,14 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             getVendorAvailability().then(setAvailable).catch(() => undefined);
         });
         const refreshTimer = window.setInterval(() => { void refreshDashboard().catch(() => undefined); }, 10000);
-        void loadVendorVehicles().then(items => { const activeVehicle = items.find(item => item.active && item.driverActive); setVehicles(items); setSelectedVehicleId(activeVehicle?.id || ""); setSelectedDriverId(activeVehicle?.driverId || ""); }).catch(() => undefined);
+        void loadVendorVehicles().then(items => {
+            const activeVehicle = items.find(item => item.active && item.driverActive);
+            setVehicles(items);
+            setSelectedVehicleId(activeVehicle?.id || "");
+            setSelectedDriverId(activeVehicle?.driverId || "");
+            setAcceptVehicleId(activeVehicle?.id || items[0]?.id || "");
+            setAcceptDriverId(activeVehicle?.driverId || items[0]?.driverId || "");
+        }).catch(() => undefined);
         return () => window.clearInterval(refreshTimer);
     }, [data.profile?.name, setStage]);
     useEffect(() => {
@@ -191,12 +201,26 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             onNotify("Order rejected and returned to dispatch.");
         } catch { onNotify("Unable to reject this order."); } finally { setOperationBusy(false); }
     };
+    const openAcceptSelection = () => {
+        if (!incomingOrder) return;
+        const preferredVehicle = vehicles.find(item => item.active && item.driverActive) ?? vehicles.find(item => item.active) ?? vehicles[0];
+        const nextVehicleId = preferredVehicle?.id || selectedVehicleId || "";
+        const nextDriverId = preferredVehicle?.driverId || selectedDriverId || "";
+        setAcceptVehicleId(nextVehicleId);
+        setAcceptDriverId(nextDriverId);
+        setAcceptSelectionOpen(true);
+    };
     const acceptIncomingOrder = async () => {
         if (!incomingOrder || incomingBusy) return;
-        if (!selectedVehicleId || !selectedDriverId) { onNotify("Select an active vehicle and driver before accepting the order."); return; }
+        const vehicleId = acceptVehicleId || selectedVehicleId;
+        const driverId = acceptDriverId || selectedDriverId;
+        if (!vehicleId || !driverId) { onNotify("Select an active vehicle and driver before accepting the order."); return; }
         setIncomingBusy(true);
         try {
-            await updateVendorOrder({ ...incomingOrder, status: "Accepted", vendorDecision: "accepted" }, { action: "accept", vehicleId: selectedVehicleId, driverId: selectedDriverId });
+            await updateVendorOrder({ ...incomingOrder, status: "Accepted", vendorDecision: "accepted" }, { action: "accept", vehicleId, driverId });
+            setSelectedVehicleId(vehicleId);
+            setSelectedDriverId(driverId);
+            setAcceptSelectionOpen(false);
             setIncomingOrder(null);
             setIncomingOrderState("pending");
             document.title = "Urban Tanker | Operations, simplified";
@@ -237,7 +261,19 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     }
     return (
         <>
-            {incomingOrder && <VendorOrderAlert order={incomingOrder} state={incomingOrderState} busy={incomingBusy} onAccept={() => void acceptIncomingOrder()} onReject={() => void rejectIncomingOrder()} onClose={() => setIncomingOrder(null)} />}
+            {acceptSelectionOpen && incomingOrder && (
+                <AcceptOrderSelectionModal
+                    vehicles={vehicles}
+                    selectedVehicleId={acceptVehicleId}
+                    selectedDriverId={acceptDriverId}
+                    onVehicleChange={setAcceptVehicleId}
+                    onDriverChange={setAcceptDriverId}
+                    onCancel={() => setAcceptSelectionOpen(false)}
+                    onConfirm={() => void acceptIncomingOrder()}
+                    busy={incomingBusy}
+                />
+            )}
+            {incomingOrder && <VendorOrderAlert order={incomingOrder} state={incomingOrderState} busy={incomingBusy} onAccept={openAcceptSelection} onReject={() => void rejectIncomingOrder()} onClose={() => setIncomingOrder(null)} />}
             <PageHeader
                 eyebrow={`Vendor portal · ${vendorName}`}
                 title="Keep every delivery moving."
@@ -371,6 +407,19 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
 
 function VendorOrderAlert({ order, state, busy, onAccept, onReject, onClose }: { order: Order; state: "pending" | "accepted" | "rejected"; busy: boolean; onAccept: () => void; onReject: () => void; onClose: () => void }) {
     return <aside className="vendor-order-alert" role="dialog" aria-live="assertive" aria-label="Vendor order notification"><button className="vendor-order-alert-close" type="button" onClick={onClose} aria-label="Close order notification">X</button><span className="eyebrow">New delivery request</span><h3>{order.service}</h3><p><b>{order.customer || "Customer"}</b> · {order.address}</p><p>{order.capacity} · {order.payment}</p>{state === "pending" ? <div className="vendor-order-alert-actions"><Button variant="quiet" onClick={onReject} disabled={busy}>Reject</Button><Button variant="primary" onClick={onAccept} disabled={busy}>{busy ? "Updating..." : "Accept order"}</Button></div> : <div className="vendor-order-alert-accepted"><Status>Accepted by another vendor</Status><button type="button" onClick={onClose} aria-label="Close accepted order notification">Close</button></div>}</aside>;
+}
+
+function AcceptOrderSelectionModal({ vehicles, selectedVehicleId, selectedDriverId, onVehicleChange, onDriverChange, onCancel, onConfirm, busy }: { vehicles: Vehicle[]; selectedVehicleId: string; selectedDriverId: string; onVehicleChange: (vehicleId: string) => void; onDriverChange: (driverId: string) => void; onCancel: () => void; onConfirm: () => void; busy: boolean; }) {
+    const selectedVehicle = vehicles.find(vehicle => vehicle.id === selectedVehicleId) ?? vehicles[0];
+    const drivers = selectedVehicle ? [{ id: selectedVehicle.driverId, name: selectedVehicle.driverName || 'Driver', phone: selectedVehicle.driverPhone || 'No phone' }] : [];
+
+    return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onCancel()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="accept-order-selection-title"><button className="modal-close" type="button" onClick={onCancel} aria-label="Close acceptance details">×</button><span className="eyebrow">Complete order acceptance</span><h2 id="accept-order-selection-title">Assign driver and vehicle</h2><p className="modal-copy">Select the vehicle and driver assigned to this delivery before confirming the order.</p><div className="auth-form"><label>Vehicle<select value={selectedVehicleId} onChange={event => {
+        onVehicleChange(event.target.value);
+        const nextVehicle = vehicles.find(vehicle => vehicle.id === event.target.value);
+        if (nextVehicle && nextVehicle.driverId && !drivers.some(driver => driver.id === nextVehicle.driverId)) {
+            onDriverChange(nextVehicle.driverId);
+        }
+    }}><option value="">Select a vehicle</option>{vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.registrationNumber} · {vehicle.vehicleType}</option>)}</select></label>{selectedVehicle && <label>Driver<select value={selectedDriverId} onChange={event => onDriverChange(event.target.value)}><option value="">Select a driver</option>{drivers.map(driver => <option key={driver.id} value={driver.id}>{driver.name} · {driver.phone}</option>)}</select></label>}{!selectedVehicle && <p className="form-error">Add a vehicle with an active driver before accepting this order.</p>}<div className="heading-actions"><Button variant="quiet" onClick={onCancel} disabled={busy}>Cancel</Button><Button variant="primary" onClick={onConfirm} disabled={busy || !selectedVehicle || !selectedDriverId}>{busy ? "Updating..." : "Confirm acceptance"}</Button></div></div></section></div>;
 }
 
 function VehicleFleetView({ vehicles, setVehicles, onNotify }: { vehicles: Vehicle[]; setVehicles: Dispatch<React.SetStateAction<Vehicle[]>>; onNotify: (message: string) => void }) {
