@@ -26,7 +26,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   }, [notify]);
   const filteredOrders = data.orders.filter(order => `${order.id} ${order.customer} ${order.address}`.toLowerCase().includes(adminQuery.toLowerCase()));
   const pagedOrders = filteredOrders.slice((ordersPage - 1) * 10, ordersPage * 10);
-  const revenue = dashboard?.revenue ?? data.orders.reduce((total, order) => total + order.amount, 0);
+  const revenue = dashboard?.revenue ?? data.orders.filter(order => order.status === 'Delivered').reduce((total, order) => total + order.amount, 0);
   const delivered = dashboard?.delivered ?? data.orders.filter(order => order.status === 'Delivered').length;
   const chart = dashboard?.chart || [];
   const liveTankers = data.orders

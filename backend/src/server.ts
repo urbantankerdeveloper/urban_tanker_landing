@@ -30,9 +30,9 @@ io.use(async (socket, next) => {
   try {
     const token = typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : '';
     const user = token ? verifyToken(token) as Record<string, any> | null : null;
-    if (!user?.uid || user.role !== 'vendor') return next(new Error('Vendor authentication required.'));
+    if (!user?.uid || !['vendor', 'customer'].includes(user.role)) return next(new Error('Authenticated customer or vendor access is required.'));
     const clientId = user.clientId || socket.handshake.auth?.clientId || 'urban-tanker';
-    const session = await sessionsCollection.findOne({ token_hash: hashToken(token), client_id: clientId, uid: user.uid, role: 'vendor', expires_at: { $gt: new Date() } });
+    const session = await sessionsCollection.findOne({ token_hash: hashToken(token), client_id: clientId, uid: user.uid, role: user.role, expires_at: { $gt: new Date() } });
     if (!session) return next(new Error('Session expired.'));
     socket.data.user = { ...user, clientId };
     next();
@@ -42,7 +42,8 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', socket => {
-  socket.join(`vendor:${socket.data.user.clientId}`);
+  if (socket.data.user.role === 'vendor') socket.join(`vendor:${socket.data.user.clientId}`);
+  if (socket.data.user.role === 'customer') socket.join(`customer:${socket.data.user.uid}`);
 });
 
 async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: Record<string, any>): Promise<void> {
@@ -211,7 +212,7 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
       vendorsCollection.find({ client_id: clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
       usersCollection.find({ client_id: clientId, role: 'customer' }, { projection: { _id: 0, uid: 1, email: 1, display_name: 1, phone_number: 1, status: 1, created_at: 1, updated_at: 1 } }).sort({ created_at: -1 }).limit(500).toArray(),
     ]);
-    const revenue = orders.reduce((total, order) => total + Number(order.amount || 0), 0);
+    const revenue = orders.filter(order => order.status === 'Delivered').reduce((total, order) => total + Number(order.amount || 0), 0);
     const delivered = orders.filter(order => order.status === 'Delivered').length;
     const activeDeliveries = orders.filter(order => !['Delivered', 'Rejected', 'Vendor rejected'].includes(order.status)).length;
     const activeVendors = vendors.filter(vendor => vendor.status === 'active' || vendor.available === true).length;
@@ -469,6 +470,7 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       };
       if (selectedVehicle) void notifyCustomerOfAcceptance(acceptedOrder, selectedVehicle).catch(error => console.error('Acceptance notification error:', error));
       io.to(`vendor:${req.user.clientId}`).emit('order:accepted', { orderId: req.params.orderId, vendorUid: req.user.uid, vendorName: req.user.displayName || 'Another vendor' });
+      if (existing.owner_uid) io.to(`customer:${existing.owner_uid}`).emit('order:accepted', { orderId: req.params.orderId, vendorUid: req.user.uid, vendorName: req.user.displayName || 'Your vendor' });
     } else if (action === 'reject') {
       io.to(`vendor:${req.user.clientId}`).emit('order:rejected', { orderId: req.params.orderId, vendorUid: req.user.uid });
     }

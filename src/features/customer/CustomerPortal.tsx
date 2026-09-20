@@ -8,16 +8,31 @@ import { Pagination } from '../../shared/components/Pagination';
 import { LiveMapModal } from '../../shared/components/LiveMapModal';
 import { CustomerLanding } from './CustomerLanding';
 import { useEffect, useState, type FormEvent } from 'react';
+import { io } from 'socket.io-client';
+import { API_BASE_URL } from '../../shared/lib/apiConfig';
+import { getAuthToken } from '../../features/auth/auth';
 
 const prices: Record<string, number> = { '3 KL': 800, '6 KL': 1250, '9 KL': 1750, '12 KL': 2400, '16 KL': 3100 };
 const sewagePrices: Record<string, number> = { '3 KL': 1800, '6 KL': 2300, '9 KL': 2900, '12 KL': 3600, '16 KL': 4400 };
 
 export function CustomerPortal() {
   const { data, active, setActive: onNavigate, notify: onNotify, bookingDraft: booking, setBookingDraft: set, setCheckoutOpen, update } = useAppStore();
+  const [acceptedOrder, setAcceptedOrder] = useState<{ orderId: string; vendorName: string } | null>(null);
   useEffect(() => {
     void loadCustomerOrders().then(orders => {
       useAppStore.setState(state => ({ data: { ...state.data, orders } }));
     }).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) return undefined;
+    const socket = io(API_BASE_URL, { auth: { token }, transports: ['websocket', 'polling'] });
+    const handleAccepted = (event: { orderId: string; vendorName: string }) => {
+      setAcceptedOrder(event);
+      void loadCustomerOrders().then(orders => useAppStore.setState(state => ({ data: { ...state.data, orders } }))).catch(() => undefined);
+    };
+    socket.on('order:accepted', handleAccepted);
+    return () => { socket.disconnect(); };
   }, []);
   const activeOrder = data.orders.find(order => order.status !== 'Delivered');
   const submitBooking = () => {
@@ -26,11 +41,12 @@ export function CustomerPortal() {
     update({ booking, pendingBooking: { ...booking, amount } });
     setCheckoutOpen(true);
   };
-  if (active === 'book') return <BookingForm booking={booking} set={set} onSubmit={submitBooking} />;
-  if (active === 'orders') return <OrdersView orders={data.orders} />;
-  if (active === 'track') return <TrackingView order={activeOrder} />;
-  if (active === 'support') return <SupportView data={data} onNotify={onNotify} />;
-  return <CustomerLanding order={activeOrder} data={data} onNavigate={onNavigate} />;
+  const content = active === 'book' ? <BookingForm booking={booking} set={set} onSubmit={submitBooking} /> : active === 'orders' ? <OrdersView orders={data.orders} /> : active === 'track' ? <TrackingView order={activeOrder} /> : active === 'support' ? <SupportView data={data} onNotify={onNotify} /> : <CustomerLanding order={activeOrder} data={data} onNavigate={onNavigate} />;
+  return <>{content}{acceptedOrder && <CustomerAcceptanceModal orderId={acceptedOrder.orderId} vendorName={acceptedOrder.vendorName} onClose={() => setAcceptedOrder(null)} onTrack={() => { setAcceptedOrder(null); onNavigate('track'); }} />}</>;
+}
+
+function CustomerAcceptanceModal({ orderId, vendorName, onClose, onTrack }: { orderId: string; vendorName: string; onClose: () => void; onTrack: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="customer-acceptance-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close order acceptance notification">×</button><span className="eyebrow">Vendor update</span><h2 id="customer-acceptance-title">Your order was accepted.</h2><p className="modal-copy">{vendorName} has accepted order <b className="mono">{orderId}</b>. Your delivery is now being prepared.</p><div className="heading-actions"><Button variant="quiet" onClick={onClose}>Close</Button><Button variant="primary" icon={Truck} onClick={onTrack}>Track order</Button></div></section></div>;
 }
 
 // Legacy overview composition retained for future customer dashboard expansion.
