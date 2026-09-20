@@ -156,8 +156,8 @@ app.get('/api/vendor/dashboard', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const vendor = await vendorsCollection.findOne({ uid: req.user.uid, client_id: req.user.clientId }, { projection: { _id: 0 } });
-    const orders = await ordersCollection.find({ client_id: req.user.clientId, status: { $nin: ['Rejected', 'Vendor rejected'] }, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ created: -1 }).limit(25).toArray();
-    const visibleOrders = orders.filter(order => order.assigned_vendor_uid === req.user.uid || (vendor?.status === 'active' && (typeof vendor?.latitude !== 'number' || typeof vendor?.longitude !== 'number' || typeof order.deliveryLatitude !== 'number' || typeof order.deliveryLongitude !== 'number' || distanceKm(vendor.latitude, vendor.longitude, order.deliveryLatitude, order.deliveryLongitude) <= vendorDispatchRadiusKm)));
+    const orders = await ordersCollection.find({ client_id: req.user.clientId, $or: [{ assigned_vendor_uid: req.user.uid }, { rejectedVendorUids: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ created: -1 }).limit(100).toArray();
+    const visibleOrders = orders.filter(order => order.assigned_vendor_uid === req.user.uid || order.rejectedVendorUids?.includes(req.user.uid) || (vendor?.status === 'active' && (typeof vendor?.latitude !== 'number' || typeof vendor?.longitude !== 'number' || typeof order.deliveryLatitude !== 'number' || typeof order.deliveryLongitude !== 'number' || distanceKm(vendor.latitude, vendor.longitude, order.deliveryLatitude, order.deliveryLongitude) <= vendorDispatchRadiusKm)));
     const vehicles = await vehiclesCollection.find({ client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray();
     res.set('Cache-Control', 'no-store');
     res.json({ vendor, vehicles, orders: visibleOrders });
@@ -256,10 +256,10 @@ app.post('/api/admin/orders/:orderId/notify-vendors', authenticateToken, async (
     const order = await ordersCollection.findOne({
       id: req.params.orderId,
       client_id: req.user.clientId,
-      status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] },
+      status: { $in: ['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'] },
       assigned_vendor_uid: { $exists: false },
     }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } });
-    if (!order) return res.status(404).json({ message: 'Only pending, unassigned orders can be sent to vendors.' });
+    if (!order) return res.status(404).json({ message: 'Only unassigned orders awaiting or retrying vendor acceptance can be sent to vendors.' });
     io.to(`vendor:${req.user.clientId}`).emit('order:created', { ...removeDeliveryOtpFields(order), excludedVendorUids: order.rejectedVendorUids || [] });
     res.json({ orderId: order.id, notified: true });
   } catch (error) {

@@ -13,7 +13,7 @@ import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui
 import { Pagination } from "../../shared/components/Pagination";
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
-import { createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorVehicles, setVendorAvailability, setVendorDriverActive, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
+import { createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorVehicles, setVendorAvailability, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
 import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "react";
 import { io, type Socket } from "socket.io-client";
 import { API_BASE_URL } from "../../shared/lib/apiConfig";
@@ -445,17 +445,24 @@ function VehicleFleetView({ vehicles, setVehicles, onNotify }: { vehicles: Vehic
 }
 
 function VendorOrdersView({ orders }: { orders: AppData["orders"] }) {
+    const [filter, setFilter] = useState<"all" | "accepted" | "rejected" | "delivered">("all");
     const [page, setPage] = useState(1);
-    const visibleOrders = orders.slice((page - 1) * 10, page * 10);
+    const acceptedStatuses: OrderStatus[] = ["Accepted", "Vendor accepted", "En route", "Arrived"];
+    const rejectedStatuses: OrderStatus[] = ["Rejected", "Vendor rejected"];
+    const filteredOrders = filter === "accepted" ? orders.filter(order => acceptedStatuses.includes(order.status)) : filter === "rejected" ? orders.filter(order => rejectedStatuses.includes(order.status)) : filter === "delivered" ? orders.filter(order => order.status === "Delivered") : orders;
+    const visibleOrders = filteredOrders.slice((page - 1) * 10, page * 10);
+    const changeFilter = (nextFilter: typeof filter) => { setFilter(nextFilter); setPage(1); };
+    const tabs = [{ id: "all" as const, label: "All orders" }, { id: "accepted" as const, label: "Accepted" }, { id: "rejected" as const, label: "Rejected" }, { id: "delivered" as const, label: "Delivered" }];
     return <>
         <PageHeader eyebrow="Vendor workspace · Orders" title="Your assigned orders." copy="Review active and completed jobs assigned to your vendor account." />
+        <div className="filter-tabs vendor-order-tabs" role="tablist" aria-label="Vendor order status filters">{tabs.map(tab => <button className={filter === tab.id ? "active" : ""} role="tab" aria-selected={filter === tab.id} type="button" key={tab.id} onClick={() => changeFilter(tab.id)}>{tab.label} <b>{tab.id === "all" ? orders.length : tab.id === "accepted" ? orders.filter(order => acceptedStatuses.includes(order.status)).length : tab.id === "rejected" ? orders.filter(order => rejectedStatuses.includes(order.status)).length : orders.filter(order => order.status === "Delivered").length}</b></button>)}</div>
         <div className="order-list">
-            {orders.length ? visibleOrders.map(order => <article className="order-row" key={order.id}>
+            {filteredOrders.length ? visibleOrders.map(order => <article className="order-row" key={order.id}>
                 <div className="order-service-icon"><Package size={19} /></div>
                 <div className="order-main"><div><b>{order.service}</b><Status>{order.status}</Status></div><span>{order.id} · {order.capacity} · {order.address}</span><small>{order.customer}</small></div>
                 <div className="order-amount"><strong>{money(order.amount)}</strong><span>{order.payment}</span></div>
-            </article>) : <div className="empty-state"><Package size={28} /><h3>No assigned orders</h3><p>New assignments will appear here when dispatch assigns a job.</p></div>}
-        </div><Pagination page={page} pageSize={10} total={orders.length} onPageChange={setPage} />
+            </article>) : <div className="empty-state"><Package size={28} /><h3>No {filter === "all" ? "assigned" : filter} orders</h3><p>Orders will appear here when they reach this status.</p></div>}
+        </div><Pagination page={page} pageSize={10} total={filteredOrders.length} onPageChange={setPage} />
     </>;
 }
 

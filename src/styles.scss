@@ -27,6 +27,75 @@
 	padding: 16px;
 	overflow: hidden
 }
+.sidebar-toggle {
+	position: absolute;
+	top: 12px;
+	right: 10px;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	color: var(--aqua-dark);
+	background: #edf7f4;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+}
+
+.sidebar-collapsed .sidebar {
+	width: 72px;
+	padding-right: 10px;
+	padding-left: 10px;
+}
+
+.sidebar-collapsed .main-content {
+	margin-left: 72px;
+}
+
+.sidebar-collapsed .sidebar-role {
+	padding-right: 0;
+	padding-left: 0;
+	padding-bottom: 25px;
+	visibility: hidden;
+}
+
+.sidebar-collapsed .sidebar nav button {
+	justify-content: center;
+	padding-right: 8px;
+	padding-left: 8px;
+}
+
+.sidebar-collapsed .sidebar nav button>span:not(.nav-symbol),
+.sidebar-collapsed .sidebar-bottom .secure-note span {
+	display: none;
+}
+
+.sidebar-collapsed .sidebar nav button b {
+	position: absolute;
+	margin: -25px 0 0 24px;
+}
+
+.sidebar-collapsed .secure-note {
+	justify-content: center;
+	padding-right: 8px;
+	padding-left: 8px;
+}
+
+.sidebar-collapsed .sidebar-bottom button {
+	justify-content: center;
+	padding-right: 8px;
+	padding-left: 8px;
+	font-size: 0;
+}
+
+.sidebar-collapsed .sidebar-bottom button svg {
+	width: 17px;
+	height: 17px;
+}
+
+.vendor-order-tabs {
+	margin-bottom: 18px;
+}
 
 .admin-orders-surface .table-head {
 	display: grid;
@@ -64,6 +133,15 @@
 	padding: 14px;
 	margin-bottom: 10px;
 	background: #fbfdfc;
+@media(max-width:760px) {
+		.sidebar-collapsed .sidebar {
+			width: 235px;
+		}
+
+		.sidebar-collapsed .main-content {
+			margin-left: 0;
+		}
+	}
 	border: 1px solid var(--line);
 	border-radius: 10px
 }
