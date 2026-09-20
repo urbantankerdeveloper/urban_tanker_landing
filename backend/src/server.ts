@@ -80,8 +80,21 @@ app.set('trust proxy', 1);
 
 app.use(cors({
   origin: (requestOrigin, callback) => {
-    const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,https://urban-tanker-landing.web.app').split(',').map(origin => origin.trim());
-    if (!requestOrigin || allowedOrigins.includes(requestOrigin)) return callback(null, true);
+    const defaults = [
+      'http://localhost:5173',
+      'https://urban-tanker-landing.web.app',
+      'https://urban-tanker-landing.firebaseapp.com',
+      'https://urban-tanker-backend.onrender.com'
+    ];
+    const allowedOrigins = Array.from(new Set([
+      ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()) : []),
+      ...defaults
+    ].filter(Boolean)));
+
+    if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
+      return callback(null, true);
+    }
+
     return callback(new Error('Origin is not allowed by CORS'));
   },
   credentials: true,
