@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "urban-tanker-landing"
-  }
+    "default": "urban-tanker-landing",
+    "?Dev ": "urban-tanker-landing"
+  },
+  "targets": {},
+  "etags": {}
 }
