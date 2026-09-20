@@ -224,6 +224,79 @@ label.input-icon input {
 	padding-top: 16px
 }
 
+.vendor-order-alert {
+	position: fixed;
+	right: 24px;
+	bottom: 24px;
+	z-index: 80;
+	width: min(370px, calc(100vw - 32px));
+	padding: 20px;
+	color: var(--ink);
+	background: var(--white);
+	border: 1px solid var(--line);
+	border-left: 4px solid var(--aqua);
+	border-radius: 14px;
+	box-shadow: 0 18px 45px rgba(18, 52, 58, .22);
+	animation: vendor-alert-in .24s ease both
+}
+
+.vendor-order-alert h3 {
+	margin: 6px 0 5px;
+	font-size: 18px
+}
+
+.vendor-order-alert p {
+	margin: 4px 0;
+	color: var(--muted);
+	font-size: 11px
+}
+
+.vendor-order-alert-close {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	width: 26px;
+	height: 26px;
+	color: var(--muted);
+	background: #eff5f3;
+	border: 0;
+	border-radius: 50%
+}
+
+.vendor-order-alert-actions,
+.vendor-order-alert-accepted {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 16px
+}
+
+.vendor-order-alert-accepted {
+	justify-content: space-between
+}
+
+.vendor-order-alert-accepted button {
+	padding: 7px 10px;
+	color: var(--aqua-dark);
+	background: transparent;
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	font-size: 10px;
+	font-weight: 800
+}
+
+@keyframes vendor-alert-in {
+	from {
+		opacity: 0;
+		transform: translateY(14px)
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0)
+	}
+}
 .tanker-delivery-details>div {
 	display: flex;
 	min-width: 0;

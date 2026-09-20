@@ -12,7 +12,10 @@ import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
 import { createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorVehicles, setVendorAvailability, setVendorDriverActive, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
-import { useEffect, useState, type Dispatch, type FormEvent } from "react";
+import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "react";
+import { io, type Socket } from "socket.io-client";
+import { API_BASE_URL } from "../../shared/lib/apiConfig";
+import { getAuthToken } from "../../features/auth/auth";
 
 const stages: OrderStatus[] = [
     "Created",
@@ -38,6 +41,10 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const [vehicles, setVehicles] = useState<Vehicle[]>([]);
     const [selectedVehicleId, setSelectedVehicleId] = useState("");
     const [selectedDriverId, setSelectedDriverId] = useState("");
+    const [incomingOrder, setIncomingOrder] = useState<Order | null>(null);
+    const [incomingOrderState, setIncomingOrderState] = useState<"pending" | "accepted" | "rejected">("pending");
+    const [incomingBusy, setIncomingBusy] = useState(false);
+    const incomingOrderRef = useRef<Order | null>(null);
     useEffect(() => {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(position => {
@@ -60,6 +67,40 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         void loadVendorVehicles().then(items => { const activeVehicle = items.find(item => item.active && item.driverActive); setVehicles(items); setSelectedVehicleId(activeVehicle?.id || ""); setSelectedDriverId(activeVehicle?.driverId || ""); }).catch(() => undefined);
         return () => window.clearInterval(refreshTimer);
     }, [data.profile?.name, setStage]);
+    useEffect(() => {
+        const token = getAuthToken();
+        if (!token) return undefined;
+        const socket: Socket = io(API_BASE_URL, { auth: { token }, transports: ["websocket", "polling"] });
+
+        const created = (order: Order) => {
+            incomingOrderRef.current = order;
+            setIncomingOrder(order);
+            setIncomingOrderState("pending");
+            document.title = "New order · Urban Tanker";
+        };
+
+        const accepted = (event: { orderId: string; vendorName: string }) => {
+            if (incomingOrderRef.current?.id !== event.orderId) return;
+            setIncomingOrderState("accepted");
+            document.title = `Order accepted by ${event.vendorName}`;
+        };
+
+        const rejected = (event: { orderId: string }) => {
+            if (incomingOrderRef.current?.id !== event.orderId) return;
+            incomingOrderRef.current = null;
+            setIncomingOrder(null);
+            document.title = "Urban Tanker | Operations, simplified";
+        };
+
+        socket.on("order:created", created);
+        socket.on("order:accepted", accepted);
+        socket.on("order:rejected", rejected);
+
+        return () => {
+            socket.disconnect();
+            document.title = "Urban Tanker | Operations, simplified";
+        };
+    }, []);
     const toggleAvailability = async () => {
         if (availabilityBusy) return;
         const next = !available;
@@ -150,6 +191,31 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             onNotify("Order rejected and returned to dispatch.");
         } catch { onNotify("Unable to reject this order."); } finally { setOperationBusy(false); }
     };
+    const acceptIncomingOrder = async () => {
+        if (!incomingOrder || incomingBusy) return;
+        if (!selectedVehicleId || !selectedDriverId) { onNotify("Select an active vehicle and driver before accepting the order."); return; }
+        setIncomingBusy(true);
+        try {
+            await updateVendorOrder({ ...incomingOrder, status: "Accepted", vendorDecision: "accepted" }, { action: "accept", vehicleId: selectedVehicleId, driverId: selectedDriverId });
+            setIncomingOrder(null);
+            setIncomingOrderState("pending");
+            document.title = "Urban Tanker | Operations, simplified";
+            onNotify("Order accepted. Customer tracking is now active.");
+        } catch (cause) {
+            const message = cause instanceof Error ? cause.message : "Unable to accept this order.";
+            if (message.toLowerCase().includes("already been accepted")) setIncomingOrderState("accepted");
+            onNotify(message);
+        } finally { setIncomingBusy(false); }
+    };
+    const rejectIncomingOrder = async () => {
+        if (!incomingOrder || incomingBusy) return;
+        setIncomingBusy(true);
+        try {
+            await updateVendorOrder({ ...incomingOrder, status: "Rejected" }, { action: "reject" });
+            setIncomingOrder(null);
+            document.title = "Urban Tanker | Operations, simplified";
+        } catch { onNotify("Unable to reject this order."); } finally { setIncomingBusy(false); }
+    };
     const shareLocation = async () => {
         if (!order || operationBusy) return;
         const location = await readCurrentLocation();
@@ -171,6 +237,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     }
     return (
         <>
+            {incomingOrder && <VendorOrderAlert order={incomingOrder} state={incomingOrderState} busy={incomingBusy} onAccept={() => void acceptIncomingOrder()} onReject={() => void rejectIncomingOrder()} onClose={() => setIncomingOrder(null)} />}
             <PageHeader
                 eyebrow={`Vendor portal · ${vendorName}`}
                 title="Keep every delivery moving."
@@ -300,6 +367,10 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             </div>
         </>
     );
+}
+
+function VendorOrderAlert({ order, state, busy, onAccept, onReject, onClose }: { order: Order; state: "pending" | "accepted" | "rejected"; busy: boolean; onAccept: () => void; onReject: () => void; onClose: () => void }) {
+    return <aside className="vendor-order-alert" role="dialog" aria-live="assertive" aria-label="Vendor order notification"><button className="vendor-order-alert-close" type="button" onClick={onClose} aria-label="Close order notification">X</button><span className="eyebrow">New delivery request</span><h3>{order.service}</h3><p><b>{order.customer || "Customer"}</b> · {order.address}</p><p>{order.capacity} · {order.payment}</p>{state === "pending" ? <div className="vendor-order-alert-actions"><Button variant="quiet" onClick={onReject} disabled={busy}>Reject</Button><Button variant="primary" onClick={onAccept} disabled={busy}>{busy ? "Updating..." : "Accept order"}</Button></div> : <div className="vendor-order-alert-accepted"><Status>Accepted by another vendor</Status><button type="button" onClick={onClose} aria-label="Close accepted order notification">Close</button></div>}</aside>;
 }
 
 function VehicleFleetView({ vehicles, setVehicles, onNotify }: { vehicles: Vehicle[]; setVehicles: Dispatch<React.SetStateAction<Vehicle[]>>; onNotify: (message: string) => void }) {

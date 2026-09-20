@@ -1,4 +1,5 @@
 import express from 'express';
+import { createServer } from 'node:http';
 import cors from 'cors';
 import compression from 'compression';
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
@@ -7,11 +8,15 @@ import authRoutes from './routes/auth.js';
 import { closeConnection, contentCollection, driversCollection, ordersCollection, sessionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import Razorpay from 'razorpay';
-import { hashPassword } from './utils/auth.js';
+import { hashPassword, hashToken } from './utils/auth.js';
+import { Server as SocketServer } from 'socket.io';
+import { verifyToken } from './utils/auth.js';
 
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
+const io = new SocketServer(httpServer, { cors: { origin: true, credentials: true } });
 const PORT = Number(process.env.PORT || 8080);
 const contentCache = new Map();
 const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_MS || 60000);
@@ -19,6 +24,25 @@ const vendorDispatchRadiusKm = Number(process.env.VENDOR_DISPATCH_RADIUS_KM || 2
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID as string,
   key_secret: process.env.RAZORPAY_KEY_SECRET as string,
+});
+
+io.use(async (socket, next) => {
+  try {
+    const token = typeof socket.handshake.auth?.token === 'string' ? socket.handshake.auth.token : '';
+    const user = token ? verifyToken(token) as Record<string, any> | null : null;
+    if (!user?.uid || user.role !== 'vendor') return next(new Error('Vendor authentication required.'));
+    const clientId = user.clientId || socket.handshake.auth?.clientId || 'urban-tanker';
+    const session = await sessionsCollection.findOne({ token_hash: hashToken(token), client_id: clientId, uid: user.uid, role: 'vendor', expires_at: { $gt: new Date() } });
+    if (!session) return next(new Error('Session expired.'));
+    socket.data.user = { ...user, clientId };
+    next();
+  } catch (error) {
+    next(error as Error);
+  }
+});
+
+io.on('connection', socket => {
+  socket.join(`vendor:${socket.data.user.clientId}`);
 });
 
 async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: Record<string, any>): Promise<void> {
@@ -53,18 +77,6 @@ function distanceKm(firstLatitude, firstLongitude, secondLatitude, secondLongitu
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-
-// Middleware
-// app.use(cors({
-//   origin: (requestOrigin, callback) => {
-//     const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://192.168.1.43:5173,https://urban-tanker-landing.web.app').split(',').map(origin => origin.trim());
-//     if (!requestOrigin || allowedOrigins.includes(requestOrigin)) return callback(null, true);
-//     return callback(new Error('Origin is not allowed by CORS'));
-//   },
-//   credentials: true,
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Id']
-// }));
 
 app.use(cors({
   origin: (requestOrigin, callback) => {
@@ -287,6 +299,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     const update: Record<string, any> = { $set: order, $setOnInsert: setOnInsert };
     if (existing && existing.status !== order.status) update.$push = { statusHistory: { status: order.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } };
     await ordersCollection.updateOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, update, { upsert: true });
+    if (!existing) io.to(`vendor:${req.user.clientId}`).emit('order:created', removeDeliveryOtpFields(order));
     res.status(200).json({ id: order.id });
   } catch (error) {
     console.error('Order persistence error:', error);
@@ -417,6 +430,9 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
         customerPhone: existing.customerPhone || customer?.phoneNumber,
       };
       if (selectedVehicle) void notifyCustomerOfAcceptance(acceptedOrder, selectedVehicle).catch(error => console.error('Acceptance notification error:', error));
+      io.to(`vendor:${req.user.clientId}`).emit('order:accepted', { orderId: req.params.orderId, vendorUid: req.user.uid, vendorName: req.user.displayName || 'Another vendor' });
+    } else if (action === 'reject') {
+      io.to(`vendor:${req.user.clientId}`).emit('order:rejected', { orderId: req.params.orderId, vendorUid: req.user.uid });
     }
     res.json(removeDeliveryOtpFields({ id: req.params.orderId, ...update }));
   } catch (error) {
@@ -529,7 +545,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Urban Tanker Backend running on http://0.0.0.0:${PORT}`);
   console.log(`📝 Health check: http://localhost:${PORT}/health`);
 });

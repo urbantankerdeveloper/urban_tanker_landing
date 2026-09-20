@@ -7,6 +7,9 @@ import { createAdminAccount, loadAdminDashboard, updateAdminVendorStatus, type A
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
 
+const buildCsvReport = (headers: string[], rows: Array<Array<string | number | undefined>>) =>
+  [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+
 export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const { data, adminQuery, setAdminQuery, notify, update } = useAppStore();
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -33,15 +36,32 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const exportOrders = () => {
     const headers = ['Booking', 'Service', 'Capacity', 'Customer', 'Address', 'Vendor', 'Amount', 'Payment', 'Status', 'Created'];
     const rows = filteredOrders.map(order => [order.id, order.service, order.capacity, order.customer, order.address, order.vendor || 'Pending assignment', order.amount, order.payment, order.status, order.created]);
-    const csv = [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `urban-tanker-orders-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    notify(`${filteredOrders.length} order${filteredOrders.length === 1 ? '' : 's'} exported.`);
+    const triggerDownload = (csv: string) => {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `urban-tanker-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      notify(`${filteredOrders.length} order${filteredOrders.length === 1 ? '' : 's'} exported.`);
+    };
+
+    if ('Worker' in window) {
+      const worker = new Worker(new URL('../../shared/workers/orderReportWorker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (event: MessageEvent<{ csv: string }>) => {
+        triggerDownload(event.data.csv);
+        worker.terminate();
+      };
+      worker.onerror = () => {
+        triggerDownload(buildCsvReport(headers, rows));
+        worker.terminate();
+      };
+      worker.postMessage({ headers, rows });
+      return;
+    }
+
+    triggerDownload(buildCsvReport(headers, rows));
   };
 
   if (view === 'orders') return <AdminOrdersView orders={filteredOrders} query={adminQuery} setQuery={setAdminQuery} />;

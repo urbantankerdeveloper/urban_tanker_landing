@@ -19,7 +19,8 @@
     "express-validator": "^7.0.0",
     "jsonwebtoken": "^9.0.0",
     "mongodb": "^6.18.0",
-    "razorpay": "^2.9.8"
+    "razorpay": "^2.9.8",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@types/compression": "^1.7.5",
