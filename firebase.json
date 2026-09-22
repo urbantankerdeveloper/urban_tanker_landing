@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "urban-tanker-landing",
     "public": "dist",
     "ignore": [
       "firebase.json",
