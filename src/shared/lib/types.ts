@@ -1,6 +1,6 @@
 export type Role = 'customer' | 'vendor' | 'admin';
-export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support' | 'fleet' | 'customers' | 'vendors' | 'coupons';
-export type OrderStatus = 'Created' | 'Pending acceptance' | 'Accepted' | 'En route' | 'Arrived' | 'Delivered' | 'Rejected' | 'Vendor assigned' | 'Vendor accepted' | 'Vendor rejected';
+export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support' | 'fleet' | 'maintenance' | 'attendance' | 'payouts' | 'subscriptions' | 'customers' | 'vendors' | 'coupons';
+export type OrderStatus = 'Created' | 'Pending acceptance' | 'Accepted' | 'En route' | 'Arrived' | 'Delivered' | 'Rejected' | 'Cancelled' | 'Vendor assigned' | 'Vendor accepted' | 'Vendor rejected';
 
 export interface Profile {
   name: string;
@@ -40,6 +40,7 @@ export interface Order {
   driver: string;
   eta: string;
   payment: string;
+  paymentId?: string;
   created: string;
   couponCode?: string;
   discount?: number;
@@ -57,6 +58,13 @@ export interface Order {
   vendorRejectionReason?: string;
   rejectedVendorUids?: string[];
   customerDeliveryOtp?: string;
+  deliveryProofUrl?: string;
+  scheduledDate?: string;
+  scheduledSlot?: string;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  customerRating?: number;
+  customerFeedback?: string;
   otpVerifiedAt?: string;
   lastLocationUpdatedAt?: string;
   deliveryLatitude?: number;

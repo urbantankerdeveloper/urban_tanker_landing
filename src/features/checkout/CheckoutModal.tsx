@@ -73,7 +73,7 @@ export function CheckoutModal() {
     )
     : 0;
   const amount = Math.max(0, baseAmount - discount);
-  const complete = (payment: string) =>
+  const complete = (payment: string, paymentId?: string) =>
     onComplete({
       id: `AF-${String(Date.now()).slice(-6)}`,
       service: details.service,
@@ -91,6 +91,7 @@ export function CheckoutModal() {
       driver: "",
       eta: "35 min",
       payment,
+      paymentId,
       created: "Just now",
       deliveryLatitude: data.location.latitude || undefined,
       deliveryLongitude: data.location.longitude || undefined,
@@ -171,7 +172,7 @@ export function CheckoutModal() {
               );
             if (!verification.verified)
               throw new Error("Payment verification failed.");
-            complete("Paid");
+            complete("Paid", verification.paymentId || payment.razorpay_payment_id);
           } catch (cause) {
             setError(
               cause instanceof Error

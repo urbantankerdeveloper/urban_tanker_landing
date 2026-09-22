@@ -33,7 +33,7 @@ export interface AppContent {
 
 export const defaultContent: AppContent = {
   coupons: [],
-  brand: { name: 'Urban Tanker', tagline: 'Water & wastewater services, simplified.', city: 'Chennai operations' },
+  brand: { name: 'Urban Tanker', tagline: 'Water & wastewater services, simplified.', city: `${import.meta.env.VITE_CITY_CODE || 'chennai'} operations` },
   customer: {
     nav: { offers: 'Offers', track: 'Track order', support: 'Help & support', home: 'Home', book: 'Book', orders: 'Orders' },
     hero: { eyebrow: 'Water & wastewater services, simplified', title: 'Water arrives when you need it.', description: 'Book trusted water or sewage tankers, choose a convenient slot, pay securely, and track every delivery.', promise: 'Clear price. Clear ETA.', eta: 'Live tracking', locationLabel: 'Delivering to' },

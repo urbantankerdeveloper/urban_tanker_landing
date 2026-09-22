@@ -55,6 +55,7 @@ export interface NotificationItem {
   detail: string;
   status: string;
   timestamp?: string | Date;
+  read?: boolean;
 }
 
 export async function loadNotifications(): Promise<{ unreadCount: number; notifications: NotificationItem[] }> {
@@ -63,6 +64,12 @@ export async function loadNotifications(): Promise<{ unreadCount: number; notifi
   const response = await fetch(`${API_BASE_URL}/api/notifications`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
   if (!response.ok) throw new Error('Unable to load notifications.');
   return await response.json() as { unreadCount: number; notifications: NotificationItem[] };
+}
+
+export async function markNotificationsRead(notificationIds: string[]): Promise<void> {
+  const user = getCurrentUser();
+  if (!user || !notificationIds.length) return;
+  await Promise.all(notificationIds.map(notificationId => fetch(`${API_BASE_URL}/api/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'PATCH', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } })));
 }
 
 export async function subscribeToCloudState(onState: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
@@ -96,6 +103,75 @@ export async function loadCustomerOrders(): Promise<AppData['orders']> {
   if (!response.ok) throw new Error('Unable to load customer orders.');
   const result = await response.json() as { orders: AppData['orders'] };
   return result.orders || [];
+}
+
+export async function cancelCustomerOrder(orderId: string, reason?: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/orders/${encodeURIComponent(orderId)}/cancel`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ reason }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to cancel the order.');
+}
+
+export async function rescheduleCustomerOrder(orderId: string, scheduledDate: string, scheduledSlot: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/orders/${encodeURIComponent(orderId)}/reschedule`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ scheduledDate, scheduledSlot }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to reschedule the order.');
+}
+
+export async function rateCustomerOrder(orderId: string, rating: number, feedback?: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/orders/${encodeURIComponent(orderId)}/rating`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ rating, feedback }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to save customer feedback.');
+}
+
+export async function loadCustomerSubscriptions(): Promise<Array<Record<string, unknown>>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/customer/subscriptions`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  if (!response.ok) throw new Error('Unable to load subscriptions.');
+  return ((await response.json()) as { subscriptions?: Array<Record<string, unknown>> }).subscriptions || [];
+}
+
+export async function createCustomerSubscription(input: { service: string; capacity: string; frequency: string; nextDelivery: string }): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/customer/subscriptions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  if (!response.ok) throw new Error('Unable to create subscription.');
+}
+
+export async function loadVendorMaintenance(): Promise<Array<Record<string, unknown>>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/maintenance`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  if (!response.ok) throw new Error('Unable to load maintenance records.');
+  return ((await response.json()) as { records?: Array<Record<string, unknown>> }).records || [];
+}
+
+export async function createVendorMaintenance(input: { vehicleId: string; scheduledAt: string; description: string; cost: number }): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/maintenance`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  if (!response.ok) throw new Error('Unable to schedule maintenance.');
+}
+
+export async function saveDriverAttendance(input: { driverId: string; date: string; status: string; notes?: string }): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/attendance`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  if (!response.ok) throw new Error('Unable to save driver attendance.');
+}
+
+export async function loadVendorPayouts(): Promise<Array<Record<string, unknown>>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/payouts`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  if (!response.ok) throw new Error('Unable to load payouts.');
+  return ((await response.json()) as { payouts?: Array<Record<string, unknown>> }).payouts || [];
 }
 
 export async function subscribeToOperations(onOperations: (operations: Pick<AppData, 'orders' | 'vendors'>) => void, onError: CloudErrorHandler): Promise<Unsubscribe> {
@@ -221,6 +297,34 @@ export async function notifyVendorsOfOrder(orderId: string): Promise<void> {
   if (!response.ok) throw new Error(payload.message || 'Unable to notify vendors.');
 }
 
+export async function assignAdminOrderToVendor(orderId: string, vendorUid: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/assign`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ vendorUid }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to assign the vendor.');
+}
+
+export interface OrderHistoryItem {
+  order_id: string;
+  client_id: string;
+  status: string;
+  timestamp: string | Date;
+  actor_uid?: string;
+  actor_role?: string;
+  vendor_uid?: string;
+  rejection_reason?: string;
+}
+
+export async function loadAdminOrderHistory(orderId: string): Promise<OrderHistoryItem[]> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/history`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
+  const payload = await response.json().catch(() => ({})) as { history?: OrderHistoryItem[]; message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to load order history.');
+  return payload.history || [];
+}
+
 export async function createAdminAccount(input: AdminAccountInput): Promise<{ uid: string; role: AdminAccountInput['role']; name: string; email: string; phone: string; status: string; available: boolean }> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
@@ -250,10 +354,10 @@ export async function updateAdminVendorStatus(vendorUid: string, active: boolean
   return { uid: payload.uid, status: payload.status || (active ? 'active' : 'inactive'), available: payload.available === true };
 }
 
-export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string; rejectionReason?: string } = {}): Promise<void> {
+export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string; rejectionReason?: string; deliveryProof?: string } = {}): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${API_BASE_URL}/api/vendor/orders/${encodeURIComponent(order.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ action: options.action, vehicleId: options.vehicleId, driverId: options.driverId, deliveryOtp: options.deliveryOtp, rejectionReason: options.rejectionReason, status: order.status, eta: order.eta, vendorLatitude: order.vendorLatitude, vendorLongitude: order.vendorLongitude }) });
+  const response = await fetch(`${API_BASE_URL}/api/vendor/orders/${encodeURIComponent(order.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ action: options.action, vehicleId: options.vehicleId, driverId: options.driverId, deliveryOtp: options.deliveryOtp, rejectionReason: options.rejectionReason, deliveryProof: options.deliveryProof, status: order.status, eta: order.eta, vendorLatitude: order.vendorLatitude, vendorLongitude: order.vendorLongitude }) });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { message?: string };
     throw new Error(payload.message || 'Unable to update vendor order.');
