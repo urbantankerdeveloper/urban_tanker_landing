@@ -1,9 +1,7 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { AppShell } from '../shared/components/AppShell';
-import { AdminDashboard, AdminDeliveryNotifications, VendorPortal } from '../features/operations';
 import { AuthScreen } from '../features/auth/AuthScreen';
-import { CheckoutModal } from '../features/checkout/CheckoutModal';
-import { CustomerPortal, CustomerHomeShell } from '../features/customer';
+import { CustomerHomeShell } from '../features/customer/CustomerHomeShell';
 import { LoadingSkeleton, Toast } from '../shared/components';
 import { contentClientId, getUserProfile, refreshCloudState, subscribeToCloudState, subscribeToContent, subscribeToOperations } from '../shared/lib/cloudStore';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent } from '../shared/lib/secureCache';
@@ -11,6 +9,12 @@ import { hydrateCloudState, hydrateContent, useAppStore } from './store';
 import { useAuth } from './providers/AuthContext';
 import type { AppContent } from '../shared/lib/content';
 import type { Workspace } from '../shared/lib/types';
+
+const AdminDashboard = lazy(() => import('../features/operations/AdminDashboard').then(module => ({ default: module.AdminDashboard })));
+const AdminDeliveryNotifications = lazy(() => import('../features/operations/AdminDashboard').then(module => ({ default: module.AdminDeliveryNotifications })));
+const VendorPortal = lazy(() => import('../features/operations/VendorPortal').then(module => ({ default: module.VendorPortal })));
+const CustomerPortal = lazy(() => import('../features/customer/CustomerPortal').then(module => ({ default: module.CustomerPortal })));
+const CheckoutModal = lazy(() => import('../features/checkout/CheckoutModal').then(module => ({ default: module.CheckoutModal })));
 
 export function App() {
   const { data, isHydrated, active, toast, mobileNav, checkoutOpen, setActive, setMobileNav, setHydrated, notify, signOut, dismissToast } = useAppStore();
@@ -72,16 +76,16 @@ export function App() {
   if (authLoading || !isHydrated) return <LoadingSkeleton />;
   if (!data.profile) return <AuthScreen />;
   if (data.role === 'customer') return <>
-    <CustomerHomeShell onNavigate={setActive} onSignOut={signOut}><CustomerPortal /></CustomerHomeShell>
+    <CustomerHomeShell onNavigate={setActive} onSignOut={signOut}><Suspense fallback={<LoadingSkeleton />}><CustomerPortal /></Suspense></CustomerHomeShell>
     <Toast message={toast} onClose={dismissToast} />
-    {checkoutOpen && <CheckoutModal />}
+    {checkoutOpen && <Suspense fallback={<LoadingSkeleton />}><CheckoutModal /></Suspense>}
   </>;
   return <>
     <AppShell role={data.role} active={active} orderCount={data.orders.length} mobileNav={mobileNav} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
-      {data.role === 'vendor' && <VendorPortal view={active} />}
-      {data.role === 'admin' && <><AdminDeliveryNotifications /><AdminDashboard view={active} /></>}
+      {data.role === 'vendor' && <Suspense fallback={<LoadingSkeleton />}><VendorPortal view={active} /></Suspense>}
+      {data.role === 'admin' && <Suspense fallback={<LoadingSkeleton />}><AdminDeliveryNotifications /><AdminDashboard view={active} /></Suspense>}
     </AppShell>
     <Toast message={toast} onClose={dismissToast} />
-    {checkoutOpen && <CheckoutModal />}
+    {checkoutOpen && <Suspense fallback={<LoadingSkeleton />}><CheckoutModal /></Suspense>}
   </>;
 }

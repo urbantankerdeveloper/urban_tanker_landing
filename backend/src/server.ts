@@ -156,7 +156,6 @@ app.use(cors({
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.use(express.urlencoded({ extended: true, limit: '64kb' }));
-app.use('/api', platformRoutes);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -781,6 +780,7 @@ app.post('/verifyRazorpayPayment', authenticateToken, async (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api', platformRoutes);
 
 // 404 handler
 app.use((req, res) => {
