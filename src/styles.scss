@@ -1174,3 +1174,48 @@ label.input-icon input {
 
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { overscroll-behavior-y: none; }
+
+@media (min-width: 761px) and (max-width: 1050px) {
+	.admin-orders-surface {
+		min-height: 0 !important;
+		padding: 16px !important;
+	}
+
+	.admin-orders-surface .table-head {
+		display: flex !important;
+		align-items: center !important;
+		min-height: 0 !important;
+		height: auto !important;
+		margin-bottom: 12px !important;
+	}
+
+	.admin-orders-surface .input-icon {
+		height: 40px !important;
+		min-height: 40px !important;
+	}
+}
+
+@media (max-width: 760px) {
+	.admin-orders-surface {
+		min-height: 0 !important;
+		padding: 12px !important;
+	}
+
+	.admin-orders-surface .table-head {
+		display: grid !important;
+		align-content: start !important;
+		gap: 10px !important;
+		min-height: 0 !important;
+		height: auto !important;
+		margin-bottom: 12px !important;
+	}
+
+	.admin-orders-surface .table-head>div {
+		min-height: 0 !important;
+	}
+
+	.admin-orders-surface .input-icon {
+		height: 40px !important;
+		min-height: 40px !important;
+	}
+}
