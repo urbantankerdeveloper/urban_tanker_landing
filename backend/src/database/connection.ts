@@ -32,10 +32,16 @@ export const usersCollection = (await databasePromise).collection<any>('users');
 export const sessionsCollection = (await databasePromise).collection<any>('sessions');
 export const ordersCollection = (await databasePromise).collection<any>('orders');
 export const orderHistoryCollection = (await databasePromise).collection<any>('order_history');
+export const notificationsCollection = (await databasePromise).collection<any>('notifications');
 export const vendorsCollection = (await databasePromise).collection<any>('vendors');
 export const driversCollection = (await databasePromise).collection<any>('drivers');
 export const vehiclesCollection = (await databasePromise).collection<any>('vehicles');
 export const contentCollection = (await databasePromise).collection<any>('content');
+export const maintenanceCollection = (await databasePromise).collection<any>('maintenance');
+export const attendanceCollection = (await databasePromise).collection<any>('driver_attendance');
+export const payoutsCollection = (await databasePromise).collection<any>('payouts');
+export const subscriptionsCollection = (await databasePromise).collection<any>('subscriptions');
+export const invoicesCollection = (await databasePromise).collection<any>('invoices');
 
 export async function closeConnection() {
   await client.close();

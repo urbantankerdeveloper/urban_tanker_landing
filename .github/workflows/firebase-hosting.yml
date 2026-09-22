@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -32,13 +35,21 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Build backend
+        run: npm --prefix backend run build
+
       - name: Build
         run: npm run build
 
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_URBAN_TANKER_LANDING }}
 
       - name: Deploy to Firebase Hosting
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: npx --yes firebase-tools deploy --only hosting --project urban-tanker-landing --non-interactive

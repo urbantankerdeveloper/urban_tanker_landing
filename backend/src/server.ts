@@ -5,14 +5,17 @@ import compression from 'compression';
 import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
-import { closeConnection, contentCollection, driversCollection, orderHistoryCollection, ordersCollection, sessionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import platformRoutes from './routes/platform.js';
+import { closeConnection, contentCollection, driversCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import Razorpay from 'razorpay';
 import { hashPassword, hashToken } from './utils/auth.js';
 import { Server as SocketServer } from 'socket.io';
 import { verifyToken } from './utils/auth.js';
+import { captureError, flushMonitoring, initializeMonitoring } from './utils/monitoring.js';
 
 dotenv.config();
+initializeMonitoring();
 
 const app = express();
 const httpServer = createServer(app);
@@ -42,7 +45,10 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', socket => {
-  if (socket.data.user.role === 'vendor') socket.join(`vendor:${socket.data.user.clientId}`);
+  if (socket.data.user.role === 'vendor') {
+    socket.join(`vendor:${socket.data.user.clientId}`);
+    socket.join(`vendor:${socket.data.user.clientId}:${socket.data.user.uid}`);
+  }
   if (socket.data.user.role === 'customer') socket.join(`customer:${socket.data.user.uid}`);
   if (socket.data.user.role === 'admin') socket.join(`admin:${socket.data.user.clientId}`);
 });
@@ -82,12 +88,42 @@ async function recordOrderHistory(order: Record<string, any>, event: { status: s
   });
 }
 
+async function recordNotification(input: { clientId: string; recipientRole: 'customer' | 'vendor' | 'admin'; recipientUid?: string; orderId?: string; type: string; title: string; detail: string }): Promise<void> {
+  await notificationsCollection.insertOne({
+    id: randomUUID(),
+    client_id: input.clientId,
+    recipient_role: input.recipientRole,
+    ...(input.recipientUid ? { recipient_uid: input.recipientUid } : {}),
+    ...(input.orderId ? { order_id: input.orderId } : {}),
+    type: input.type,
+    title: input.title,
+    detail: input.detail,
+    created_at: new Date(),
+  });
+}
+
 function distanceKm(firstLatitude, firstLongitude, secondLatitude, secondLongitude) {
   const radians = value => value * Math.PI / 180;
   const deltaLatitude = radians(secondLatitude - firstLatitude);
   const deltaLongitude = radians(secondLongitude - firstLongitude);
   const value = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(radians(firstLatitude)) * Math.cos(radians(secondLatitude)) * Math.sin(deltaLongitude / 2) ** 2;
   return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+async function dispatchOrderNotification(order: Record<string, any>, excludedVendorUids: string[] = []): Promise<string[]> {
+  const [vendors, vehicles] = await Promise.all([
+    vendorsCollection.find({ client_id: order.client_id, $or: [{ status: 'active' }, { available: true }] }, { projection: { _id: 0, uid: 1, latitude: 1, longitude: 1 } }).toArray(),
+    vehiclesCollection.find({ client_id: order.client_id, active: true, driver_active: true }, { projection: { _id: 0, vendor_uid: 1 } }).toArray(),
+  ]);
+  const vehicleVendorUids = new Set(vehicles.map(vehicle => vehicle.vendor_uid));
+  const eligibleVendorUids = vendors.filter(vendor => {
+    if (!vendor.uid || excludedVendorUids.includes(vendor.uid) || !vehicleVendorUids.has(vendor.uid)) return false;
+    if (typeof order.deliveryLatitude !== 'number' || typeof order.deliveryLongitude !== 'number' || typeof vendor.latitude !== 'number' || typeof vendor.longitude !== 'number') return true;
+    return distanceKm(vendor.latitude, vendor.longitude, order.deliveryLatitude, order.deliveryLongitude) <= vendorDispatchRadiusKm;
+  }).map(vendor => vendor.uid);
+  const payload = { ...removeDeliveryOtpFields(order), excludedVendorUids };
+  for (const vendorUid of eligibleVendorUids) io.to(`vendor:${order.client_id}:${vendorUid}`).emit('order:created', payload);
+  return eligibleVendorUids;
 }
 
 app.disable('x-powered-by');
@@ -120,6 +156,7 @@ app.use(cors({
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.use(express.urlencoded({ extended: true, limit: '64kb' }));
+app.use('/api', platformRoutes);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -134,34 +171,31 @@ app.get('/health', (req, res) => {
 
 app.get('/api/notifications', authenticateToken, async (req, res) => {
   try {
-    const baseFilter: Record<string, any> = { client_id: req.user.clientId };
-    if (req.user.role === 'customer') baseFilter.owner_uid = req.user.uid;
-    const orderFilter = req.user.role === 'vendor'
-      ? { ...baseFilter, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }
-      : req.user.role === 'admin'
-        ? baseFilter
-        : baseFilter;
-    const orders = await ordersCollection.find(orderFilter, { projection: { _id: 0, id: 1, status: 1, service: 1, customer: 1, vendor: 1, updated_at: 1, created: 1 } }).sort({ updated_at: -1, created: -1 }).limit(20).toArray();
-    const activeStatuses = ['Created', 'Pending acceptance', 'Vendor assigned', 'Accepted', 'Vendor accepted', 'En route', 'Arrived'];
-    const unreadCount = req.user.role === 'admin'
-      ? orders.filter(order => ['Created', 'Pending acceptance', 'Vendor assigned', 'Delivered'].includes(order.status)).length
-      : req.user.role === 'vendor'
-        ? orders.filter(order => ['Created', 'Pending acceptance', 'Vendor assigned'].includes(order.status)).length
-        : orders.filter(order => activeStatuses.includes(order.status)).length;
-    const notifications = orders.slice(0, 10).map(order => {
-      const subject = order.status === 'Delivered' ? 'Order delivered' : order.status === 'Rejected' ? 'Order rejected' : order.status === 'Accepted' || order.status === 'Vendor accepted' ? 'Order accepted' : order.status === 'Arrived' ? 'Order arrived' : 'Order awaiting action';
-      const detail = req.user.role === 'vendor'
-        ? `${order.service || 'Order'} · ${order.id}`
-        : req.user.role === 'customer'
-          ? `${order.service || 'Order'} is ${String(order.status).toLowerCase()}`
-          : `${order.id} · ${order.customer || order.vendor || 'Booking'}`;
-      return { id: order.id, title: subject, detail, status: order.status, timestamp: order.updated_at || order.created };
-    });
+    const recipientFilter = req.user.role === 'vendor'
+      ? { $or: [{ recipient_role: 'vendor', recipient_uid: req.user.uid }, { recipient_role: 'vendor', recipient_uid: { $exists: false } }] }
+      : { recipient_role: req.user.role, ...(req.user.role === 'customer' ? { recipient_uid: req.user.uid } : {}) };
+    const filter = { client_id: req.user.clientId, ...recipientFilter };
+    const notifications = await notificationsCollection.find(filter, { projection: { _id: 0, id: 1, order_id: 1, title: 1, detail: 1, type: 1, created_at: 1, read_at: 1 } }).sort({ created_at: -1 }).limit(25).toArray();
+    const unreadCount = await notificationsCollection.countDocuments({ ...filter, read_at: { $exists: false } });
     res.set('Cache-Control', 'no-store');
-    res.json({ unreadCount, notifications });
+    res.json({ unreadCount, notifications: notifications.map(notification => ({ id: notification.id, orderId: notification.order_id, title: notification.title, detail: notification.detail, status: notification.type, timestamp: notification.created_at, read: Boolean(notification.read_at) })) });
   } catch (error) {
     console.error('Notifications lookup error:', error);
     res.status(500).json({ message: 'Unable to load notifications.' });
+  }
+});
+
+app.patch('/api/notifications/:notificationId/read', authenticateToken, async (req, res) => {
+  try {
+    const recipientFilter = req.user.role === 'vendor'
+      ? { $or: [{ recipient_role: 'vendor', recipient_uid: req.user.uid }, { recipient_role: 'vendor', recipient_uid: { $exists: false } }] }
+      : { recipient_role: req.user.role, ...(req.user.role === 'customer' ? { recipient_uid: req.user.uid } : {}) };
+    const result = await notificationsCollection.updateOne({ id: req.params.notificationId, client_id: req.user.clientId, ...recipientFilter }, { $set: { read_at: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ message: 'Notification was not found.' });
+    res.status(204).send();
+  } catch (error) {
+    console.error('Notification read update error:', error);
+    res.status(500).json({ message: 'Unable to update notification.' });
   }
 });
 
@@ -293,11 +327,46 @@ app.post('/api/admin/orders/:orderId/notify-vendors', authenticateToken, async (
       assigned_vendor_uid: { $exists: false },
     }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } });
     if (!order) return res.status(404).json({ message: 'Only unassigned orders awaiting or retrying vendor acceptance can be sent to vendors.' });
-    io.to(`vendor:${req.user.clientId}`).emit('order:created', { ...removeDeliveryOtpFields(order), excludedVendorUids: order.rejectedVendorUids || [] });
-    res.json({ orderId: order.id, notified: true });
+      const eligibleVendorUids = await dispatchOrderNotification(order, order.rejectedVendorUids || []);
+    res.json({ orderId: order.id, notified: true, eligibleVendorUids });
   } catch (error) {
     console.error('Vendor notification retry error:', error);
     res.status(500).json({ message: 'Unable to notify vendors about this order.' });
+  }
+});
+
+app.get('/api/admin/orders/:orderId/history', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const order = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { _id: 0, id: 1 } });
+    if (!order) return res.status(404).json({ message: 'Order was not found.' });
+    const history = await orderHistoryCollection.find({ client_id: req.user.clientId, order_id: req.params.orderId }, { projection: { _id: 0 } }).sort({ timestamp: 1 }).toArray();
+    res.json({ orderId: req.params.orderId, history });
+  } catch (error) {
+    console.error('Order history lookup error:', error);
+    res.status(500).json({ message: 'Unable to load order history.' });
+  }
+});
+
+app.patch('/api/admin/orders/:orderId/assign', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const vendorUid = String(req.body.vendorUid || '').trim();
+    if (!vendorUid) return res.status(400).json({ message: 'A vendor is required.' });
+    const vendor = await vendorsCollection.findOne({ uid: vendorUid, client_id: req.user.clientId }, { projection: { _id: 0, uid: 1, name: 1, email: 1, phone: 1 } });
+    if (!vendor) return res.status(404).json({ message: 'Vendor was not found.' });
+    const filter = { id: req.params.orderId, client_id: req.user.clientId, assigned_vendor_uid: { $exists: false }, status: { $in: ['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'] } };
+    const now = new Date();
+    const update: Record<string, any> = { $set: { assigned_vendor_uid: vendorUid, vendor: vendor.name, vendorEmail: vendor.email, vendorPhone: vendor.phone, status: 'Vendor assigned', updated_at: now }, $push: { statusHistory: { status: 'Vendor assigned', timestamp: now, actorUid: req.user.uid, actorRole: req.user.role } } };
+    const result = await ordersCollection.updateOne(filter, update);
+    if (!result.matchedCount) return res.status(409).json({ message: 'Order is no longer available for manual assignment.' });
+    await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: 'Vendor assigned', actorUid: req.user.uid, actorRole: req.user.role, vendorUid });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'vendor', recipientUid: vendorUid, orderId: req.params.orderId, type: 'vendor-assigned', title: 'Order assigned', detail: `${req.params.orderId} was assigned by dispatch.` });
+    io.to(`vendor:${req.user.clientId}:${vendorUid}`).emit('order:created', { id: req.params.orderId, status: 'Vendor assigned', assignedVendorUid: vendorUid });
+    res.json({ orderId: req.params.orderId, vendorUid, status: 'Vendor assigned' });
+  } catch (error) {
+    console.error('Manual vendor assignment error:', error);
+    res.status(500).json({ message: 'Unable to assign the vendor.' });
   }
 });
 
@@ -380,7 +449,12 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     await ordersCollection.updateOne({ id: order.id, client_id: req.user.clientId, owner_uid: req.user.uid }, update, { upsert: true });
     if (!existing) {
       await Promise.all(statusHistory.map(event => recordOrderHistory(order, { status: event.status, actorUid: req.user.uid, actorRole: req.user.role })));
-      io.to(`vendor:${req.user.clientId}`).emit('order:created', removeDeliveryOtpFields(order));
+      await Promise.all([
+        recordNotification({ clientId: req.user.clientId, recipientRole: 'customer', recipientUid: req.user.uid, orderId: order.id, type: 'booking-created', title: 'Booking created', detail: `${order.service} is waiting for vendor assignment.` }),
+        recordNotification({ clientId: req.user.clientId, recipientRole: 'vendor', orderId: order.id, type: 'order-awaiting-action', title: 'New delivery request', detail: `${order.service} · ${order.id}` }),
+        recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: order.id, type: 'order-awaiting-action', title: 'Order awaiting vendor', detail: `${order.id} · ${order.customer || 'Customer'}` }),
+      ]);
+      await dispatchOrderNotification(order, order.rejectedVendorUids || []);
     } else if (existing.status !== order.status) {
       await recordOrderHistory(order, { status: order.status, actorUid: req.user.uid, actorRole: req.user.role });
     }
@@ -400,6 +474,82 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Customer orders lookup error:', error);
     res.status(500).json({ message: 'Unable to load customer orders.' });
+  }
+});
+
+app.patch('/api/orders/:orderId/cancel', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+    const reason = String(req.body.reason || 'Cancelled by customer.').trim().slice(0, 500);
+    const filter = { id: req.params.orderId, client_id: req.user.clientId, owner_uid: req.user.uid, status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] } };
+    const order = await ordersCollection.findOne(filter, { projection: { _id: 0, service: 1 } });
+    if (!order) return res.status(400).json({ message: 'Only pending orders can be cancelled.' });
+    const now = new Date();
+    const cancellationUpdate: Record<string, any> = { $set: { status: 'Cancelled', cancellationReason: reason, cancelledAt: now, updated_at: now }, $push: { statusHistory: { status: 'Cancelled', timestamp: now, actorUid: req.user.uid, actorRole: req.user.role } } };
+    const result = await ordersCollection.updateOne(filter, cancellationUpdate);
+    if (!result.matchedCount) return res.status(404).json({ message: 'Order was not found.' });
+    await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: 'Cancelled', actorUid: req.user.uid, actorRole: req.user.role });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: 'cancelled', title: 'Order cancelled', detail: `${req.params.orderId} · Customer cancelled the booking.` });
+    io.to(`vendor:${req.user.clientId}`).emit('order:cancelled', { orderId: req.params.orderId });
+    res.json({ id: req.params.orderId, status: 'Cancelled' });
+  } catch (error) {
+    console.error('Customer order cancellation error:', error);
+    res.status(500).json({ message: 'Unable to cancel the order.' });
+  }
+});
+
+app.patch('/api/orders/:orderId/reschedule', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+    const scheduledDate = String(req.body.scheduledDate || '').trim();
+    const scheduledSlot = String(req.body.scheduledSlot || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(scheduledDate) || !scheduledSlot) return res.status(400).json({ message: 'A valid date and delivery slot are required.' });
+    const filter = { id: req.params.orderId, client_id: req.user.clientId, owner_uid: req.user.uid, status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] } };
+    const rescheduleUpdate: Record<string, any> = { $set: { scheduledDate, scheduledSlot, updated_at: new Date() }, $push: { statusHistory: { status: 'Pending acceptance', timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role } } };
+    const result = await ordersCollection.updateOne(filter, rescheduleUpdate);
+    if (!result.matchedCount) return res.status(400).json({ message: 'Only pending orders can be rescheduled.' });
+    await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: 'Pending acceptance', actorUid: req.user.uid, actorRole: req.user.role });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: 'rescheduled', title: 'Order rescheduled', detail: `${req.params.orderId} · ${scheduledDate} · ${scheduledSlot}` });
+    res.json({ id: req.params.orderId, scheduledDate, scheduledSlot });
+  } catch (error) {
+    console.error('Customer order reschedule error:', error);
+    res.status(500).json({ message: 'Unable to reschedule the order.' });
+  }
+});
+
+app.patch('/api/orders/:orderId/rating', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+    const rating = Number(req.body.rating);
+    const feedback = String(req.body.feedback || '').trim().slice(0, 1000);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ message: 'A rating from 1 to 5 is required.' });
+    const filter = { id: req.params.orderId, client_id: req.user.clientId, owner_uid: req.user.uid, status: 'Delivered' };
+    const result = await ordersCollection.updateOne(filter, { $set: { customerRating: rating, customerFeedback: feedback, updated_at: new Date() } });
+    if (!result.matchedCount) return res.status(400).json({ message: 'Only delivered orders can be rated.' });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: 'rating-received', title: 'Customer feedback received', detail: `${req.params.orderId} · ${rating}/5` });
+    res.json({ id: req.params.orderId, rating, feedback });
+  } catch (error) {
+    console.error('Customer rating error:', error);
+    res.status(500).json({ message: 'Unable to save customer feedback.' });
+  }
+});
+
+app.post('/api/admin/orders/:orderId/refund', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const order = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { _id: 0, paymentId: 1, amount: 1, payment: 1, owner_uid: 1 } });
+    if (!order) return res.status(404).json({ message: 'Order was not found.' });
+    if (order.payment !== 'Paid' || !order.paymentId) return res.status(400).json({ message: 'This order does not have a refundable Razorpay payment.' });
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) return res.status(503).json({ message: 'Refunds are not configured on the backend.' });
+    const refundAmount = Math.round(Number(req.body.amount || order.amount) * 100);
+    if (!Number.isInteger(refundAmount) || refundAmount <= 0 || refundAmount > Math.round(Number(order.amount) * 100)) return res.status(400).json({ message: 'A valid refund amount is required.' });
+    const refund = await razorpay.payments.refund(order.paymentId, { amount: refundAmount });
+    await ordersCollection.updateOne({ id: req.params.orderId, client_id: req.user.clientId }, { $set: { payment: 'Refunded', refundId: refund.id, refundedAt: new Date(), refundAmount: refundAmount / 100, updated_at: new Date() } });
+    if (order.owner_uid) await recordNotification({ clientId: req.user.clientId, recipientRole: 'customer', recipientUid: order.owner_uid, orderId: req.params.orderId, type: 'refunded', title: 'Payment refunded', detail: `${req.params.orderId} · Refund initiated.` });
+    res.json({ orderId: req.params.orderId, refundId: refund.id, status: 'Refunded' });
+  } catch (error) {
+    console.error('Payment refund error:', error);
+    res.status(500).json({ message: 'Unable to process the refund.' });
   }
 });
 
@@ -488,6 +638,7 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       update.status = 'Delivered';
       update.otpVerifiedAt = new Date();
     }
+    if (typeof req.body.deliveryProof === 'string' && req.body.deliveryProof.length <= 2_000_000) update.deliveryProofUrl = req.body.deliveryProof;
     if (typeof req.body.vendorLatitude === 'number' || typeof req.body.vendorLongitude === 'number') update.lastLocationUpdatedAt = new Date();
     if (!Object.keys(update).length) return res.status(400).json({ message: 'No valid order update was provided.' });
     const orderFilter = action === 'accept'
@@ -512,6 +663,11 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
     const result = await ordersCollection.updateOne(orderFilter, updateDocument);
     if (!result.matchedCount) return res.status(404).json({ message: 'Vendor order was not found.' });
     await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: update.status || existing.status, actorUid: req.user.uid, actorRole: req.user.role, ...(action === 'reject' ? { vendorUid: req.user.uid, rejectionReason: update.vendorRejectionReason } : {}) });
+    const notificationTitle = update.status === 'Delivered' ? 'Order delivered' : action === 'reject' ? 'Order rejected' : action === 'accept' ? 'Order accepted' : `Order ${String(update.status || existing.status).toLowerCase()}`;
+    await Promise.all([
+      recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: String(update.status || existing.status).toLowerCase().replace(/\s+/g, '-'), title: notificationTitle, detail: `${req.params.orderId} · ${req.user.displayName || 'Vendor'}` }),
+      ...(existing.owner_uid ? [recordNotification({ clientId: req.user.clientId, recipientRole: 'customer', recipientUid: existing.owner_uid, orderId: req.params.orderId, type: String(update.status || existing.status).toLowerCase().replace(/\s+/g, '-'), title: notificationTitle, detail: `${req.params.orderId} · ${req.user.displayName || 'Vendor'}` })] : []),
+    ]);
     if (action === 'accept') {
       const customer = existing.customerEmail || existing.customerPhone ? existing : await usersCollection.findOne(
         { uid: existing.owner_uid, client_id: req.user.clientId, role: 'customer' },
@@ -633,7 +789,7 @@ app.use((req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
+  captureError(err, { method: req.method, path: req.path });
   res.status(500).json({ 
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
@@ -649,12 +805,14 @@ httpServer.listen(PORT, '0.0.0.0', () => {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Closing server...');
+  await flushMonitoring();
   await closeConnection();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received. Closing server...');
+  await flushMonitoring();
   await closeConnection();
   process.exit(0);
 });

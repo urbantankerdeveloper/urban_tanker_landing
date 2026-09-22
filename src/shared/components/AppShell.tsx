@@ -1,7 +1,7 @@
 import { Bell, ChevronDown, Droplets, Menu, Search, Settings2, ShieldCheck } from 'lucide-react';
 import { UserBadge } from './ui';
 import { useContent } from '../hooks/useContent';
-import { loadNotifications, type NotificationItem } from '../lib/cloudStore';
+import { loadNotifications, markNotificationsRead, type NotificationItem } from '../lib/cloudStore';
 import { useEffect, useRef, useState } from 'react';
 
 function notificationAge(timestamp?: string | Date): string {
@@ -28,7 +28,11 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
   const openNotifications = () => {
     if (notificationTimer.current) window.clearTimeout(notificationTimer.current);
     setNotificationOpen(true);
-    void refreshNotifications();
+    void loadNotifications().then(result => {
+      setNotifications([...result.notifications].sort((first, second) => new Date(second.timestamp || 0).getTime() - new Date(first.timestamp || 0).getTime()));
+      setNotificationCount(0);
+      void markNotificationsRead(result.notifications.filter(notification => !notification.read).map(notification => notification.id));
+    }).catch(() => undefined);
     notificationTimer.current = window.setTimeout(closeNotifications, 15_000);
   };
   useEffect(() => {
@@ -39,7 +43,7 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
       if (notificationTimer.current) window.clearTimeout(notificationTimer.current);
     };
   }, [role]);
-  const navItems = [['overview', content.operations.overview], ['book', content.operations.bookTanker], ['orders', content.operations.orders], ['track', content.operations.liveTracking], ...(role === 'vendor' ? [['fleet', 'Fleet']] : []), ...(role === 'admin' ? [['customers', 'Customers'], ['vendors', 'Vendors'], ['coupons', 'Coupons']] : []), ['support', content.operations.helpSupport]];
+  const navItems = [['overview', content.operations.overview], ['book', content.operations.bookTanker], ['orders', content.operations.orders], ['track', content.operations.liveTracking], ...(role === 'customer' ? [['subscriptions', 'Subscriptions']] : []), ...(role === 'vendor' ? [['fleet', 'Fleet'], ['maintenance', 'Maintenance'], ['attendance', 'Attendance'], ['payouts', 'Payouts']] : []), ...(role === 'admin' ? [['customers', 'Customers'], ['vendors', 'Vendors'], ['coupons', 'Coupons']] : []), ['support', content.operations.helpSupport]];
   return <div className={`app role-${role}`}>
     <header className="topbar">
       <button className="mobile-menu" onClick={onToggleMobileNav} aria-label={content.operations.openNavigation}><Menu size={20} /></button>

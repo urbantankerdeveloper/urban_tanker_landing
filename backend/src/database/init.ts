@@ -67,6 +67,9 @@ const collections = {
         driver_active: { bsonType: 'bool' },
         active: { bsonType: 'bool' },
         image_url: { bsonType: 'string' },
+        registration_expiry: { bsonType: 'date' },
+        insurance_expiry: { bsonType: 'date' },
+        permit_expiry: { bsonType: 'date' },
         updated_at: { bsonType: 'date' },
       },
     },
@@ -82,7 +85,7 @@ const collections = {
         service: { bsonType: 'string' },
         deliveryLatitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
         deliveryLongitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
-        status: { enum: ['Created', 'Pending acceptance', 'Accepted', 'En route', 'Arrived', 'Delivered', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected'] },
+        status: { enum: ['Created', 'Pending acceptance', 'Accepted', 'En route', 'Arrived', 'Delivered', 'Rejected', 'Cancelled', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected'] },
         vendorDecision: { enum: ['pending', 'accepted', 'rejected'] },
         vehicleId: { bsonType: 'string' },
         vehicleRegistrationNumber: { bsonType: 'string' },
@@ -92,8 +95,19 @@ const collections = {
         driver: { bsonType: 'string' },
         driverPhone: { bsonType: 'string' },
         driverActive: { bsonType: 'bool' },
+        paymentId: { bsonType: 'string' },
+        refundId: { bsonType: 'string' },
+        refundAmount: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        refundedAt: { bsonType: 'date' },
         deliveryOtpHash: { bsonType: 'string' },
         customerDeliveryOtp: { bsonType: 'string' },
+        deliveryProofUrl: { bsonType: 'string' },
+        scheduledDate: { bsonType: 'string' },
+        scheduledSlot: { bsonType: 'string' },
+        cancellationReason: { bsonType: 'string' },
+        cancelledAt: { bsonType: 'date' },
+        customerRating: { bsonType: ['int', 'long', 'double'] },
+        customerFeedback: { bsonType: 'string' },
         otpVerifiedAt: { bsonType: 'date' },
         statusHistory: { bsonType: 'array' },
         created: { bsonType: ['date', 'string'] },
@@ -113,6 +127,75 @@ const collections = {
         actor_role: { enum: ['customer', 'vendor', 'admin'] },
         vendor_uid: { bsonType: 'string' },
         rejection_reason: { bsonType: 'string' },
+      },
+    },
+  },
+  notifications: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'recipient_role', 'title', 'detail', 'created_at'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        recipient_uid: { bsonType: 'string' },
+        recipient_role: { enum: ['customer', 'vendor', 'admin'] },
+        order_id: { bsonType: 'string' },
+        type: { bsonType: 'string' },
+        title: { bsonType: 'string' },
+        detail: { bsonType: 'string' },
+        created_at: { bsonType: 'date' },
+        read_at: { bsonType: 'date' },
+      },
+    },
+  },
+  maintenance: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'vendor_uid', 'vehicle_id', 'status', 'scheduled_at', 'created_at'],
+      properties: {
+        id: { bsonType: 'string' }, client_id: { bsonType: 'string' }, vendor_uid: { bsonType: 'string' }, vehicle_id: { bsonType: 'string' },
+        status: { enum: ['scheduled', 'in-progress', 'completed', 'cancelled'] }, scheduled_at: { bsonType: 'date' }, completed_at: { bsonType: 'date' },
+        description: { bsonType: 'string' }, cost: { bsonType: ['int', 'long', 'double', 'decimal'] }, created_at: { bsonType: 'date' },
+      },
+    },
+  },
+  driver_attendance: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'vendor_uid', 'driver_id', 'date', 'status', 'created_at'],
+      properties: {
+        id: { bsonType: 'string' }, client_id: { bsonType: 'string' }, vendor_uid: { bsonType: 'string' }, driver_id: { bsonType: 'string' },
+        date: { bsonType: 'string' }, status: { enum: ['present', 'absent', 'leave'] }, notes: { bsonType: 'string' }, created_at: { bsonType: 'date' },
+      },
+    },
+  },
+  payouts: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'vendor_uid', 'amount', 'status', 'created_at'],
+      properties: {
+        id: { bsonType: 'string' }, client_id: { bsonType: 'string' }, vendor_uid: { bsonType: 'string' }, amount: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        status: { enum: ['pending', 'processing', 'paid', 'failed'] }, period_start: { bsonType: 'string' }, period_end: { bsonType: 'string' }, created_at: { bsonType: 'date' },
+      },
+    },
+  },
+  subscriptions: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'owner_uid', 'service', 'capacity', 'frequency', 'status', 'next_delivery', 'created_at'],
+      properties: {
+        id: { bsonType: 'string' }, client_id: { bsonType: 'string' }, owner_uid: { bsonType: 'string' }, service: { bsonType: 'string' }, capacity: { bsonType: 'string' },
+        frequency: { enum: ['weekly', 'biweekly', 'monthly'] }, status: { enum: ['active', 'paused', 'cancelled'] }, next_delivery: { bsonType: 'string' }, created_at: { bsonType: 'date' },
+      },
+    },
+  },
+  invoices: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'order_id', 'owner_uid', 'amount', 'status', 'created_at'],
+      properties: {
+        id: { bsonType: 'string' }, client_id: { bsonType: 'string' }, order_id: { bsonType: 'string' }, owner_uid: { bsonType: 'string' }, amount: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        status: { enum: ['issued', 'refunded', 'void'] }, created_at: { bsonType: 'date' },
       },
     },
   },
@@ -206,11 +289,29 @@ const initDatabase = async () => {
     }
     await db.collection('orders').createIndex({ client_id: 1, id: 1 }, { unique: true, name: 'client_order_id_unique' });
     await db.collection('order_history').createIndex({ client_id: 1, order_id: 1, timestamp: 1 }, { name: 'order_history_timeline' });
+    await db.collection('notifications').createIndex({ client_id: 1, recipient_role: 1, recipient_uid: 1, created_at: -1 }, { name: 'recipient_notifications' });
+    await db.collection('notifications').createIndex({ client_id: 1, id: 1 }, { unique: true, name: 'notification_id_unique' });
+    await db.collection('maintenance').createIndex({ client_id: 1, vendor_uid: 1, vehicle_id: 1, scheduled_at: -1 }, { name: 'vehicle_maintenance' });
+    await db.collection('driver_attendance').createIndex({ client_id: 1, vendor_uid: 1, driver_id: 1, date: 1 }, { unique: true, name: 'driver_attendance_unique' });
+    await db.collection('payouts').createIndex({ client_id: 1, vendor_uid: 1, created_at: -1 }, { name: 'vendor_payouts' });
+    await db.collection('subscriptions').createIndex({ client_id: 1, owner_uid: 1, status: 1 }, { name: 'customer_subscriptions' });
+    await db.collection('invoices').createIndex({ client_id: 1, order_id: 1 }, { unique: true, name: 'order_invoice_unique' });
     const ordersForHistory = await db.collection('orders').find({}, { projection: { _id: 0, id: 1, client_id: 1, status: 1, owner_uid: 1, statusHistory: 1, created: 1 } }).toArray();
     for (const order of ordersForHistory) {
       if (await db.collection('order_history').countDocuments({ client_id: order.client_id, order_id: order.id })) continue;
       const events = order.statusHistory?.length ? order.statusHistory : [{ status: order.status, timestamp: order.created, actorUid: order.owner_uid, actorRole: 'customer' }];
       await db.collection('order_history').insertMany(events.map(event => ({ order_id: order.id, client_id: order.client_id, status: event.status, timestamp: new Date(event.timestamp), ...(event.actorUid ? { actor_uid: event.actorUid } : {}), ...(event.actorRole ? { actor_role: event.actorRole } : {}) })));
+    }
+    const ordersForNotifications = await db.collection('orders').find({}, { projection: { _id: 0, id: 1, client_id: 1, owner_uid: 1, status: 1, service: 1, customer: 1, vendor: 1 } }).toArray();
+    for (const order of ordersForNotifications) {
+      if (await db.collection('notifications').countDocuments({ client_id: order.client_id, order_id: order.id })) continue;
+      const title = order.status === 'Delivered' ? 'Order delivered' : order.status === 'Rejected' ? 'Order rejected' : order.status === 'Accepted' || order.status === 'Vendor accepted' ? 'Order accepted' : 'Order awaiting action';
+      const detail = `${order.id} · ${order.service || order.customer || order.vendor || 'Booking'}`;
+      const records = [
+        { id: randomUUID(), client_id: order.client_id, recipient_role: 'admin', order_id: order.id, type: String(order.status).toLowerCase().replace(/\s+/g, '-'), title, detail, created_at: new Date() },
+        ...(order.owner_uid ? [{ id: randomUUID(), client_id: order.client_id, recipient_uid: order.owner_uid, recipient_role: 'customer', order_id: order.id, type: String(order.status).toLowerCase().replace(/\s+/g, '-'), title, detail, created_at: new Date() }] : []),
+      ];
+      await db.collection('notifications').insertMany(records);
     }
     const ordersNeedingOtp = await db.collection('orders').find({
       status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] },

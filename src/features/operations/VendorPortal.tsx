@@ -13,7 +13,7 @@ import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui
 import { Pagination } from "../../shared/components/Pagination";
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
-import { createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorVehicles, setVendorAvailability, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
+import { createVendorMaintenance, createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorMaintenance, loadVendorPayouts, loadVendorVehicles, saveDriverAttendance, setVendorAvailability, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
 import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "react";
 import { io, type Socket } from "socket.io-client";
 import { API_BASE_URL } from "../../shared/lib/apiConfig";
@@ -39,6 +39,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const [vendorOrders, setVendorOrders] = useState<AppData["orders"]>([]);
     const [availabilityBusy, setAvailabilityBusy] = useState(false);
     const [otp, setOtp] = useState("");
+    const [deliveryProof, setDeliveryProof] = useState("");
     const [operationBusy, setOperationBusy] = useState(false);
     const [vehicles, setVehicles] = useState<Vehicle[]>([]);
     const [selectedVehicleId, setSelectedVehicleId] = useState("");
@@ -165,11 +166,12 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             setOperationBusy(true);
             try {
                 const completed = { ...order, status: "Delivered" as OrderStatus, eta: "Delivered" };
-                await updateVendorOrder(completed, { deliveryOtp: otp });
+                await updateVendorOrder(completed, { deliveryOtp: otp, deliveryProof });
                 onUpdate(completed);
                 setVendorOrders(current => current.map(item => item.id === completed.id ? completed : item));
                 setStage("Delivered");
                 setOtp("");
+                setDeliveryProof("");
                 onNotify("Delivery completed after OTP verification.");
             } catch (cause) { onNotify(cause instanceof Error ? cause.message : "Unable to complete delivery."); } finally { setOperationBusy(false); }
             return;
@@ -263,6 +265,9 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         if (view === "orders") return <VendorOrdersView orders={vendorOrders} />;
         if (view === "track") return <VendorTrackingView order={activeOrder} />;
         if (view === "fleet") return <VehicleFleetView vehicles={vehicles} setVehicles={setVehicles} onNotify={onNotify} />;
+        if (view === "maintenance") return <VendorMaintenanceView vehicles={vehicles} onNotify={onNotify} />;
+        if (view === "attendance") return <VendorAttendanceView vehicles={vehicles} onNotify={onNotify} />;
+        if (view === "payouts") return <VendorPayoutsView onNotify={onNotify} />;
         if (view === "support") return <VendorSupportView onNotify={onNotify} />;
         return <VendorBookingView onNotify={onNotify} />;
     }
@@ -376,7 +381,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                                             : `Mark ${stages[index + 1]}`}
                                 </Button>
                             </div>
-                            {stage === "Arrived" && <label className="vendor-otp-field">Delivery OTP<input inputMode="numeric" maxLength={6} value={otp} onChange={event => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter 6-digit OTP" /></label>}
+                            {stage === "Arrived" && <><label className="vendor-otp-field">Delivery OTP<input inputMode="numeric" maxLength={6} value={otp} onChange={event => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter 6-digit OTP" /></label><label className="vendor-otp-field">Delivery proof photo<input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 1_500_000) { onNotify("Choose an image smaller than 1.5 MB."); event.target.value = ""; return; } const reader = new FileReader(); reader.onload = () => setDeliveryProof(typeof reader.result === "string" ? reader.result : ""); reader.readAsDataURL(file); }} /></label></>}
                         </>
                     ) : (
                         <div className="empty-state">
@@ -415,6 +420,26 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
 
 function CustomerContactModal({ order, onClose }: { order: Order; onClose: () => void }) {
     return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal customer-contact-modal" role="dialog" aria-modal="true" aria-labelledby="customer-contact-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close customer information"><X size={18} /></button><span className="eyebrow">Customer details</span><h2 id="customer-contact-title">{order.customer || "Customer"}</h2><div className="customer-contact-details"><div><span>Order</span><b className="mono">{order.id}</b></div><div><span>Phone</span><b>{order.customerPhone || "No phone number available"}</b></div><div><span>Delivery address</span><b>{order.address || "No address available"}</b></div><div><span>Service</span><b>{order.service} · {order.capacity}</b></div></div><div className="heading-actions"><Button variant="primary" onClick={onClose}>OK</Button></div></section></div>;
+}
+
+function VendorMaintenanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; onNotify: (message: string) => void }) {
+    const [records, setRecords] = useState<Array<Record<string, unknown>>>([]);
+    const [form, setForm] = useState({ vehicleId: vehicles[0]?.id || '', scheduledAt: '', description: '', cost: '0' });
+    useEffect(() => { void loadVendorMaintenance().then(setRecords).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load maintenance records.')); }, []);
+    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); try { await createVendorMaintenance({ ...form, cost: Number(form.cost) || 0 }); setRecords(await loadVendorMaintenance()); onNotify('Maintenance reminder scheduled.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to schedule maintenance.'); } };
+    return <><PageHeader eyebrow="Vendor workspace · Maintenance" title="Keep the fleet ready." copy="Schedule maintenance work before it interrupts customer deliveries." /><section className="data-surface"><form className="auth-form" onSubmit={submit}><div className="field-row"><label>Vehicle<select value={form.vehicleId} onChange={event => setForm({ ...form, vehicleId: event.target.value })}>{vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.registrationNumber}</option>)}</select></label><label>Scheduled date<input type="date" value={form.scheduledAt} onChange={event => setForm({ ...form, scheduledAt: event.target.value })} required /></label></div><div className="field-row"><label>Description<input value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="Service, inspection, repair" required /></label><label>Estimated cost<input type="number" min="0" value={form.cost} onChange={event => setForm({ ...form, cost: event.target.value })} /></label></div><Button variant="primary" type="submit" disabled={!vehicles.length}>Schedule maintenance</Button></form></section><section className="data-surface"><div className="section-heading"><div><span className="eyebrow">Maintenance calendar</span><h2>{records.length} records</h2></div></div>{records.length ? records.map(record => <article className="order-row" key={String(record.id)}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{String(record.description)}</b><Status>{String(record.status)}</Status></div><span>{String(record.scheduled_at)}</span><small>Estimated cost: {String(record.cost || 0)}</small></div></article>) : <div className="empty-state"><Package size={28} /><h3>No maintenance scheduled</h3></div>}</section></>;
+}
+
+function VendorAttendanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; onNotify: (message: string) => void }) {
+    const [form, setForm] = useState({ driverId: vehicles[0]?.driverId || '', date: new Date().toISOString().slice(0, 10), status: 'present', notes: '' });
+    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); try { await saveDriverAttendance(form); onNotify('Driver attendance saved.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to save attendance.'); } };
+    return <><PageHeader eyebrow="Vendor workspace · Attendance" title="Know who is ready to drive." copy="Record daily driver attendance and keep dispatch availability accurate." /><section className="data-surface"><form className="auth-form" onSubmit={submit}><label>Driver<select value={form.driverId} onChange={event => setForm({ ...form, driverId: event.target.value })}>{vehicles.map(vehicle => <option key={vehicle.driverId} value={vehicle.driverId}>{vehicle.driverName} · {vehicle.registrationNumber}</option>)}</select></label><div className="field-row"><label>Date<input type="date" value={form.date} onChange={event => setForm({ ...form, date: event.target.value })} required /></label><label>Status<select value={form.status} onChange={event => setForm({ ...form, status: event.target.value })}><option value="present">Present</option><option value="absent">Absent</option><option value="leave">Leave</option></select></label></div><label>Notes<textarea value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} rows={3} /></label><Button variant="primary" type="submit" disabled={!vehicles.length}>Save attendance</Button></form></section></>;
+}
+
+function VendorPayoutsView({ onNotify }: { onNotify: (message: string) => void }) {
+    const [payouts, setPayouts] = useState<Array<Record<string, unknown>>>([]);
+    useEffect(() => { void loadVendorPayouts().then(setPayouts).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load payouts.')); }, []);
+    return <><PageHeader eyebrow="Vendor workspace · Payouts" title="Track your earnings." copy="Review payout periods and payment status from dispatch." /><section className="data-surface"><div className="section-heading"><div><span className="eyebrow">Payout history</span><h2>{payouts.length} payouts</h2></div></div>{payouts.length ? payouts.map(payout => <article className="order-row" key={String(payout.id)}><div className="order-service-icon"><IndianRupee size={19} /></div><div className="order-main"><div><b>{String(payout.period_start || 'Payout')}</b><Status>{String(payout.status)}</Status></div><span>{String(payout.period_end || '')}</span></div><div className="order-amount"><strong>{String(payout.amount || 0)}</strong></div></article>) : <div className="empty-state"><IndianRupee size={28} /><h3>No payouts yet</h3><p>Completed delivery earnings will appear here.</p></div>}</section></>;
 }
 
 function VendorOrderAlert({ order, state, busy, onAccept, onReject, onClose }: { order: Order; state: "pending" | "accepted" | "rejected"; busy: boolean; onAccept: () => void; onReject: () => void; onClose: () => void }) {

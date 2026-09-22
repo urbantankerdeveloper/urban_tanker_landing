@@ -1,10 +1,10 @@
-import { Check, Gauge, IndianRupee, Package, Plus, RefreshCcw, Search, ShieldCheck, Truck, UserRound, Users, WalletCards, MapPin, MessageSquare, X } from 'lucide-react';
+import { Check, Gauge, History, IndianRupee, Package, Plus, RefreshCcw, Search, ShieldCheck, Truck, UserRound, Users, WalletCards, MapPin, MessageSquare, X } from 'lucide-react';
 import { money } from '../../shared/data/demo';
 import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { contentClientId, createAdminAccount, loadAdminDashboard, loadContent, notifyVendorsOfOrder, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData } from '../../shared/lib/cloudStore';
+import { assignAdminOrderToVendor, contentClientId, createAdminAccount, loadAdminDashboard, loadAdminOrderHistory, loadContent, notifyVendorsOfOrder, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
 import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
@@ -42,6 +42,9 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const [dashboard, setDashboard] = useState<AdminDashboardData | null>(null);
   const [ordersPage, setOrdersPage] = useState(1);
   const [notifyingOrderId, setNotifyingOrderId] = useState<string | null>(null);
+  const [historyOrderId, setHistoryOrderId] = useState<string | null>(null);
+  const [orderHistory, setOrderHistory] = useState<OrderHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const refreshDashboard = async (showMessage = false) => {
     setRefreshing(true);
@@ -108,7 +111,16 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     setNotifyingOrderId(orderId);
     try { await notifyVendorsOfOrder(orderId); notify('Order notification sent to connected vendors.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to notify vendors.'); } finally { setNotifyingOrderId(null); }
   };
-  if (view === 'orders') return <AdminOrdersView orders={filteredOrders} query={adminQuery} setQuery={setAdminQuery} notifyingOrderId={notifyingOrderId} onRetryNotification={retryNotification} />;
+  const openOrderHistory = async (orderId: string) => {
+    setHistoryOrderId(orderId);
+    setHistoryLoading(true);
+    try { setOrderHistory(await loadAdminOrderHistory(orderId)); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to load order history.'); setHistoryOrderId(null); } finally { setHistoryLoading(false); }
+  };
+  const assignOrder = async (orderId: string, vendorUid: string) => {
+    if (!vendorUid) return;
+    try { await assignAdminOrderToVendor(orderId, vendorUid); await refreshDashboard(); notify('Vendor assigned to the order.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to assign the vendor.'); }
+  };
+  if (view === 'orders') return <AdminOrdersView orders={filteredOrders} vendors={dashboard?.vendors || data.vendors} query={adminQuery} setQuery={setAdminQuery} notifyingOrderId={notifyingOrderId} onRetryNotification={retryNotification} onAssign={assignOrder} />;
   const addAccountToDashboard = (account: Awaited<ReturnType<typeof createAdminAccount>>) => {
     if (account.role === 'vendor') {
       const vendor = { uid: account.uid, name: account.name, email: account.email, phone: account.phone, driver: '', zone: '', vehicle: '', capacity: '', status: account.status, available: account.available, rating: '' };
@@ -138,6 +150,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Orders</span><h2>Booking control</h2></div><div className="table-tools"><Button variant="quiet" icon={RefreshCcw} onClick={exportOrders}>Export report</Button><label className="input-icon" htmlFor="order-search"><Search size={15} /><input id="order-search" placeholder="Search order or customer" value={adminQuery} onChange={event => { setAdminQuery(event.target.value); setOrdersPage(1); }} /></label></div></div><div className="table-scroll"><table><caption className="sr-only">Urban Tanker booking control</caption><thead><tr><th scope="col">Booking</th><th scope="col">Service</th><th scope="col">Customer</th><th scope="col">Vendor</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>{pagedOrders.map(order => <tr key={order.id}><td><b className="mono">{order.id}</b><small>{order.created}</small></td><td>{order.service}<small>{order.capacity}</small></td><td>{order.customer}<small>{order.address}</small></td><td>{order.vendor || 'Pending assignment'}<small>{order.driver || '—'}</small></td><td><b>{money(order.amount)}</b><small>{order.payment}</small></td><td><Status>{order.status}</Status></td><td>{['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'].includes(order.status) && !order.vendor ? <Button variant="quiet" icon={RefreshCcw} onClick={() => void retryNotification(order.id)} disabled={notifyingOrderId === order.id}>{notifyingOrderId === order.id ? 'Sending...' : order.status === 'Rejected' ? 'Re-initiate vendors' : 'Notify vendors'}</Button> : '—'}</td></tr>)}</tbody></table></div><Pagination page={ordersPage} pageSize={10} total={filteredOrders.length} onPageChange={setOrdersPage} /></article>
     {bookingOpen && <AdminBookingModal booking={booking} setBooking={setBooking} onClose={() => setBookingOpen(false)} onSubmit={(event) => { event.preventDefault(); const order = { id: `ORD-${Date.now().toString().slice(-8)}`, service: booking.service, capacity: booking.capacity, address: booking.address, customer: booking.customer, amount: Number(booking.amount) || 0, status: 'Created' as const, vendor: '', driver: '', eta: 'Pending assignment', payment: 'Due on delivery', created: new Date().toLocaleString('en-IN') }; update({ orders: [order, ...data.orders] }); setBookingOpen(false); notify('Booking created and sent for vendor assignment.'); }} />}
     {selectedTanker && <TankerDeliveryModal order={selectedTanker.order} vendor={selectedTanker.vendor} onClose={() => setSelectedTanker(null)} />}
+    {historyOrderId && <AdminOrderHistoryModal orderId={historyOrderId} history={orderHistory} loading={historyLoading} onClose={() => setHistoryOrderId(null)} />}
   </>;
 }
 
@@ -220,13 +233,26 @@ function AdminBookingModal({ booking, setBooking, onClose, onSubmit }: { booking
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-booking-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close booking form">×</button><span className="eyebrow">Admin booking control</span><h2 id="admin-booking-title">Create a test order.</h2><p className="modal-copy">Create a booking with a pending vendor assignment.</p><form className="auth-form" onSubmit={onSubmit}><label>Service<select value={booking.service} onChange={event => setBooking({ ...booking, service: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={booking.capacity} onChange={event => setBooking({ ...booking, capacity: event.target.value })} required /></label><label>Customer name<input value={booking.customer} onChange={event => setBooking({ ...booking, customer: event.target.value })} required /></label><label>Delivery address<input value={booking.address} onChange={event => setBooking({ ...booking, address: event.target.value })} required /></label><label>Amount<input type="number" min="0" value={booking.amount} onChange={event => setBooking({ ...booking, amount: event.target.value })} required /></label><div className="heading-actions"><Button variant="quiet" onClick={onClose}>Cancel</Button><Button variant="primary" type="submit">Create booking</Button></div></form></section></div>;
 }
 
-function AdminOrdersView({ orders, query, setQuery, notifyingOrderId, onRetryNotification }: { orders: AppData['orders']; query: string; setQuery: (value: string) => void; notifyingOrderId: string | null; onRetryNotification: (orderId: string) => Promise<void> }) {
+function AdminOrdersView({ orders, vendors, query, setQuery, notifyingOrderId, onRetryNotification, onAssign }: { orders: AppData['orders']; vendors: AppData['vendors']; query: string; setQuery: (value: string) => void; notifyingOrderId: string | null; onRetryNotification: (orderId: string) => Promise<void>; onAssign: (orderId: string, vendorUid: string) => Promise<void> }) {
   const [page, setPage] = useState(1);
+  const [historyOrderId, setHistoryOrderId] = useState<string | null>(null);
+  const [history, setHistory] = useState<OrderHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const visibleOrders = orders.slice((page - 1) * 10, page * 10);
+  const openHistory = async (orderId: string) => {
+    setHistoryOrderId(orderId);
+    setHistoryLoading(true);
+    try { setHistory(await loadAdminOrderHistory(orderId)); } catch { setHistory([]); } finally { setHistoryLoading(false); }
+  };
   return <>
-    <PageHeader eyebrow="Admin workspace · Orders" title="Booking control." copy="Search and review all tenant orders and their current lifecycle status." />
-    <article className="data-surface table-surface admin-orders-surface"><div className="table-head"><div><span className="eyebrow">Tenant orders</span><h2>{orders.length} visible orders</h2></div><label className="input-icon" htmlFor="admin-orders-search"><Search size={15} /><input id="admin-orders-search" placeholder="Search order or customer" value={query} onChange={event => { setQuery(event.target.value); setPage(1); }} /></label></div><div className="table-scroll"><table className="admin-orders-table"><thead><tr><th>Booking</th><th>Service</th><th>Customer</th><th>Vendor</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead><tbody>{visibleOrders.map(order => <tr key={order.id}><td data-label="Booking"><b className="mono">{order.id}</b><small>{order.created}</small></td><td data-label="Service">{order.service}<small>{order.capacity}</small></td><td data-label="Customer">{order.customer}<small>{order.address}</small></td><td data-label="Vendor">{order.vendor || 'Pending assignment'}<small>{order.driver || '—'}</small></td><td data-label="Amount"><b>{money(order.amount)}</b><small>{order.payment}</small></td><td data-label="Status"><Status>{order.status}</Status></td><td data-label="Actions">{['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'].includes(order.status) && !order.vendor ? <Button variant="quiet" icon={RefreshCcw} onClick={() => void onRetryNotification(order.id)} disabled={notifyingOrderId === order.id}>{notifyingOrderId === order.id ? 'Sending...' : order.status === 'Rejected' ? 'Re-initiate vendors' : 'Notify vendors'}</Button> : '—'}</td></tr>)}</tbody></table></div><Pagination page={page} pageSize={10} total={orders.length} onPageChange={setPage} /></article>
+    <PageHeader eyebrow="Admin workspace · Orders" title="Booking control." copy="Search and review all tenant orders and their current lifecycle status." action={orders[0] && <Button variant="quiet" icon={History} onClick={() => void openHistory(orders[0].id)}>View latest history</Button>} />
+    <article className="data-surface table-surface admin-orders-surface"><div className="table-head"><div><span className="eyebrow">Tenant orders</span><h2>{orders.length} visible orders</h2></div><label className="input-icon" htmlFor="admin-orders-search"><Search size={15} /><input id="admin-orders-search" placeholder="Search order or customer" value={query} onChange={event => { setQuery(event.target.value); setPage(1); }} /></label></div><div className="table-scroll"><table className="admin-orders-table"><thead><tr><th>Booking</th><th>Service</th><th>Customer</th><th>Vendor</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead><tbody>{visibleOrders.map(order => <tr key={order.id}><td data-label="Booking"><b className="mono">{order.id}</b><small>{order.created}</small></td><td data-label="Service">{order.service}<small>{order.capacity}</small></td><td data-label="Customer">{order.customer}<small>{order.address}</small></td><td data-label="Vendor">{order.vendor || 'Pending assignment'}<small>{order.driver || '—'}</small></td><td data-label="Amount"><b>{money(order.amount)}</b><small>{order.payment}</small></td><td data-label="Status"><Status>{order.status}</Status></td><td data-label="Actions"><div className="table-actions">{['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'].includes(order.status) && !order.vendor ? <><Button variant="quiet" icon={RefreshCcw} onClick={() => void onRetryNotification(order.id)} disabled={notifyingOrderId === order.id}>{notifyingOrderId === order.id ? 'Sending...' : order.status === 'Rejected' ? 'Re-initiate vendors' : 'Notify vendors'}</Button><select aria-label={`Assign vendor to ${order.id}`} defaultValue="" onChange={event => void onAssign(order.id, event.target.value)}><option value="">Assign vendor</option>{vendors.filter(vendor => vendor.status === 'active' || vendor.available === true).map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name}</option>)}</select></> : null}<Button variant="quiet" icon={History} onClick={() => void openHistory(order.id)}>History</Button></div></td></tr>)}</tbody></table></div><Pagination page={page} pageSize={10} total={orders.length} onPageChange={setPage} /></article>
+    {historyOrderId && <AdminOrderHistoryModal orderId={historyOrderId} history={history} loading={historyLoading} onClose={() => setHistoryOrderId(null)} />}
   </>;
+}
+
+function AdminOrderHistoryModal({ orderId, history, loading, onClose }: { orderId: string; history: OrderHistoryItem[]; loading: boolean; onClose: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal order-history-modal" role="dialog" aria-modal="true" aria-labelledby="order-history-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close order history">×</button><span className="eyebrow">Order timeline</span><h2 id="order-history-title">{orderId}</h2>{loading ? <p className="modal-copy">Loading history...</p> : history.length ? <ol className="order-history-timeline">{history.map((event, index) => <li key={`${event.timestamp}-${index}`}><span className="order-history-marker" /><div><b>{event.status}</b><time>{new Date(event.timestamp).toLocaleString('en-IN')}</time>{event.vendor_uid && <small>Vendor: {event.vendor_uid}</small>}{event.rejection_reason && <small>Reason: {event.rejection_reason}</small>}</div></li>)}</ol> : <p className="modal-copy">No lifecycle history has been recorded yet.</p>}<div className="heading-actions"><Button variant="primary" onClick={onClose}>Close</Button></div></section></div>;
 }
 
 function AdminTrackingView({ orders, vendors }: { orders: AppData['orders']; vendors: AppData['vendors'] }) {

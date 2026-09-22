@@ -1174,6 +1174,70 @@ label.input-icon input {
 
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { overscroll-behavior-y: none; }
+.table-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+}
+
+.order-history-timeline {
+	position: relative;
+	display: grid;
+	gap: 18px;
+	padding: 6px 0 6px 22px;
+	margin: 22px 0 4px;
+	list-style: none;
+}
+
+.order-history-timeline::before {
+	position: absolute;
+	top: 10px;
+	bottom: 10px;
+	left: 5px;
+	width: 1px;
+	background: var(--line);
+	content: '';
+}
+
+.order-history-timeline li {
+	position: relative;
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 3px;
+}
+
+.order-history-marker {
+	position: absolute;
+	top: 3px;
+	left: -21px;
+	width: 11px;
+	height: 11px;
+	background: var(--aqua);
+	border: 3px solid var(--white);
+	border-radius: 50%;
+	box-shadow: 0 0 0 1px var(--aqua);
+}
+
+.order-history-timeline b,
+.order-history-timeline time,
+.order-history-timeline small {
+	display: block;
+}
+
+.order-history-timeline b {
+	font-size: 12px;
+}
+
+.order-history-timeline time,
+.order-history-timeline small {
+	color: var(--muted);
+	font-size: 10px;
+}
+
+.order-history-timeline small {
+	margin-top: 2px;
+}
 
 @media (min-width: 761px) and (max-width: 1050px) {
 	.admin-orders-surface {
@@ -1218,4 +1282,31 @@ body { overscroll-behavior-y: none; }
 		height: 40px !important;
 		min-height: 40px !important;
 	}
+}
+.order-inline-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 5px;
+}
+
+.order-inline-actions button {
+	padding: 4px 7px;
+	color: var(--aqua-dark);
+	background: var(--mint);
+	border: 0;
+	border-radius: 6px;
+	font-size: 9px;
+	font-weight: 800;
+}
+
+.order-inline-actions button:last-child {
+	color: var(--coral);
+	background: #fff0ed;
+}
+
+.table-actions select {
+	width: 125px;
+	min-height: 34px;
+	padding: 7px;
+	font-size: 10px;
 }

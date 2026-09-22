@@ -11,6 +11,7 @@
     "db:init": "npm run build && node dist/database/init.js"
   },
   "dependencies": {
+    "@sentry/node": "^10.75.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
