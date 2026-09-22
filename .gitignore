@@ -7,4 +7,5 @@ implmemt
 atlas-credentials.env
 .firebase/*
 .build-validation/*
-dist/index.html
+dist/
+firebase-dist/
