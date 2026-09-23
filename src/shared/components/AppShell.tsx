@@ -17,7 +17,19 @@ function notificationAge(timestamp?: string | Date): string {
 
 export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, onToggleMobileNav, onNotify, onSignOut, children }) {
   const content = useContent();
-  const { data, sidebarCollapsed, searchQuery, searchOpen, online, notificationOpen, notificationCount, setSidebarCollapsed, setSearchQuery, setSearchOpen, setOnline, setNotificationOpen, setNotificationCount } = useAppStore(state => ({ data: state.data, sidebarCollapsed: state.sidebarCollapsed, searchQuery: state.searchQuery, searchOpen: state.searchOpen, online: state.online, notificationOpen: state.notificationOpen, notificationCount: state.notificationCount, setSidebarCollapsed: state.setSidebarCollapsed, setSearchQuery: state.setSearchQuery, setSearchOpen: state.setSearchOpen, setOnline: state.setOnline, setNotificationOpen: state.setNotificationOpen, setNotificationCount: state.setNotificationCount }));
+  const data = useAppStore(state => state.data);
+  const sidebarCollapsed = useAppStore(state => state.sidebarCollapsed);
+  const searchQuery = useAppStore(state => state.searchQuery);
+  const searchOpen = useAppStore(state => state.searchOpen);
+  const online = useAppStore(state => state.online);
+  const notificationOpen = useAppStore(state => state.notificationOpen);
+  const notificationCount = useAppStore(state => state.notificationCount);
+  const setSidebarCollapsed = useAppStore(state => state.setSidebarCollapsed);
+  const setSearchQuery = useAppStore(state => state.setSearchQuery);
+  const setSearchOpen = useAppStore(state => state.setSearchOpen);
+  const setOnline = useAppStore(state => state.setOnline);
+  const setNotificationOpen = useAppStore(state => state.setNotificationOpen);
+  const setNotificationCount = useAppStore(state => state.setNotificationCount);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const notificationTimer = useRef<number | undefined>(undefined);
   const refreshNotifications = () => loadNotifications().then(result => { setNotificationCount(result.unreadCount); setNotifications([...result.notifications].sort((first, second) => new Date(second.timestamp || 0).getTime() - new Date(first.timestamp || 0).getTime())); }).catch(() => undefined);

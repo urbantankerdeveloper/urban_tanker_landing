@@ -1190,6 +1190,7 @@ body { overscroll-behavior-y: none; }
 
 .sidebar-collapsed .sidebar {
 	width: 72px;
+	padding-top: 52px;
 	padding-right: 10px;
 	padding-left: 10px;
 }
@@ -1199,13 +1200,27 @@ body { overscroll-behavior-y: none; }
 }
 
 .sidebar-collapsed .sidebar-role {
+	height: 0;
+		padding: 0;
+		margin: 0;
+		overflow: hidden;
 	visibility: hidden;
+}
+.sidebar-collapsed .sidebar nav {
+	gap: 2px;
 }
 
 .sidebar-collapsed .sidebar nav button {
 	justify-content: center;
+	min-height: 42px;
+		height: 42px;
+		gap: 0;
 	padding-right: 8px;
 	padding-left: 8px;
+}
+.sidebar-collapsed .sidebar nav button .nav-icon {
+	margin-right: auto;
+	margin-left: auto;
 }
 
 .sidebar-collapsed .sidebar nav button>span:not(.nav-icon),
@@ -1221,8 +1236,14 @@ body { overscroll-behavior-y: none; }
 .sidebar-collapsed .secure-note,
 .sidebar-collapsed .sidebar-bottom button {
 	justify-content: center;
+	gap: 0;
 	padding-right: 8px;
 	padding-left: 8px;
+}
+.sidebar-collapsed .sidebar-bottom .secure-note>svg,
+.sidebar-collapsed .sidebar-bottom button>svg {
+	margin-right: auto;
+	margin-left: auto;
 }
 
 .sidebar-collapsed .sidebar-bottom button {
