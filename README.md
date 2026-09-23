@@ -175,7 +175,7 @@ MONGODB_DB_NAME=urban_tanker
 
 # JWT
 JWT_SECRET=your-secret-key
-JWT_EXPIRE=7d
+JWT_EXPIRE=24h
 
 # Server
 PORT=5000

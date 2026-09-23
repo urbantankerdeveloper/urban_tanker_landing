@@ -277,6 +277,14 @@ export async function createVendorDriver(input: { name: string; phone: string; a
   if (!response.ok) throw new Error('Unable to create driver.');
 }
 
+export async function createAdminDriver(vendorUid: string, input: { name: string; phone: string; address: string; addressProof?: string }): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vendors/${encodeURIComponent(vendorUid)}/drivers`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to create driver.');
+}
+
 export async function setVendorDriverStatus(driverId: string, active: boolean): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
@@ -298,6 +306,15 @@ export async function createVendorVehicle(input: { registrationNumber: string; v
   const payload = await response.json() as { vehicle?: { id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; driver_id?: string; driver_name?: string; driver_phone?: string; driver_active?: boolean; image_url?: string; registration_expiry?: string; insurance_expiry?: string; permit_expiry?: string }; message?: string };
   if (!response.ok || !payload.vehicle) throw new Error(payload.message || 'Unable to create vehicle.');
   return { id: payload.vehicle.id, registrationNumber: payload.vehicle.registration_number, vehicleType: payload.vehicle.vehicle_type, capacity: payload.vehicle.capacity || '', active: payload.vehicle.active, driverId: payload.vehicle.driver_id || '', driverName: payload.vehicle.driver_name || '', driverPhone: payload.vehicle.driver_phone || '', driverActive: payload.vehicle.driver_active === true, imageUrl: payload.vehicle.image_url, registrationExpiry: payload.vehicle.registration_expiry, insuranceExpiry: payload.vehicle.insurance_expiry, permitExpiry: payload.vehicle.permit_expiry };
+}
+
+export async function createAdminVehicle(vendorUid: string, input: { registrationNumber: string; vehicleType: string; capacity: string; imageUrl?: string; registrationExpiry?: string; insuranceExpiry?: string; permitExpiry?: string }): Promise<Vehicle> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vendors/${encodeURIComponent(vendorUid)}/vehicles`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { vehicle?: { id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; image_url?: string }; message?: string };
+  if (!response.ok || !payload.vehicle) throw new Error(payload.message || 'Unable to create vehicle.');
+  return { id: payload.vehicle.id, registrationNumber: payload.vehicle.registration_number, vehicleType: payload.vehicle.vehicle_type, capacity: payload.vehicle.capacity || '', active: payload.vehicle.active, driverId: '', driverName: '', driverPhone: '', driverActive: false, imageUrl: payload.vehicle.image_url };
 }
 
 export async function setVendorVehicleActive(vehicleId: string, active: boolean): Promise<void> {

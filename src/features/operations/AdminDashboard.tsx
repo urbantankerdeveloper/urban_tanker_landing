@@ -4,7 +4,7 @@ import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, loadAdminDashboard, loadAdminOrderHistory, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
+import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminOrderHistory, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
 import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
@@ -138,6 +138,8 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     setDashboard(current => current ? { ...current, vendors: current.vendors.map(updateVendor) } : current);
     update({ vendors: data.vendors.map(updateVendor) });
   }} />;
+  if (view === 'fleet') return <AdminFleetDriversView mode="fleet" vendors={dashboard?.vendors || data.vendors} onNotify={notify} />;
+  if (view === 'drivers') return <AdminFleetDriversView mode="drivers" vendors={dashboard?.vendors || data.vendors} onNotify={notify} />;
   if (view === 'coupons') return <AdminCouponsView />;
   if (view === 'track') return <AdminTrackingView orders={data.orders} vendors={data.vendors} />;
   if (view === 'dispatch') return <DispatchBoard orders={data.orders} vendors={data.vendors} onAssign={assignOrder} onNotify={notify} />;
@@ -227,6 +229,31 @@ function AdminVendorsView({ vendors, onCreated, onNotify, onUpdated }: { vendors
     </article>
     {accountOpen && <AdminAccountModal role="vendor" onClose={() => setAccountOpen(false)} onCreated={account => { onCreated(account); setAccountOpen(false); }} />}
   </>;
+}
+
+function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'drivers'; vendors: AppData['vendors']; onNotify: (message: string) => void }) {
+  const [vendorUid, setVendorUid] = useState('');
+  const [vehicleForm, setVehicleForm] = useState({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
+  const [driverForm, setDriverForm] = useState({ name: '', phone: '', address: '', addressProof: '' });
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!vendorUid) { onNotify('Select the vendor who owns this record.'); return; }
+    setBusy(true);
+    try {
+      if (mode === 'fleet') {
+        await createAdminVehicle(vendorUid, vehicleForm);
+        setVehicleForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
+        onNotify('Vehicle created for the selected vendor.');
+      } else {
+        await createAdminDriver(vendorUid, driverForm);
+        setDriverForm({ name: '', phone: '', address: '', addressProof: '' });
+        onNotify('Driver created for the selected vendor.');
+      }
+    } catch (error) { onNotify(error instanceof Error ? error.message : `Unable to create ${mode === 'fleet' ? 'vehicle' : 'driver'}.`); }
+    finally { setBusy(false); }
+  };
+  return <><PageHeader eyebrow={`Admin workspace · ${mode === 'fleet' ? 'Fleet' : 'Drivers'}`} title={mode === 'fleet' ? 'Create a vendor vehicle.' : 'Create a vendor driver.'} copy="Select the owning vendor before registering this operational record." /><section className="data-surface"><form className="auth-form" onSubmit={submit} noValidate><label>Owning vendor<select value={vendorUid} onChange={event => setVendorUid(event.target.value)} required><option value="">Select a vendor</option>{vendors.map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name} · {vendor.email}</option>)}</select></label>{mode === 'fleet' ? <><label>Registration number<input value={vehicleForm.registrationNumber} onChange={event => setVehicleForm({ ...vehicleForm, registrationNumber: event.target.value.toUpperCase() })} placeholder="TN 12 AB 8987" required /></label><div className="field-row"><label>Vehicle type<select value={vehicleForm.vehicleType} onChange={event => setVehicleForm({ ...vehicleForm, vehicleType: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={vehicleForm.capacity} onChange={event => setVehicleForm({ ...vehicleForm, capacity: event.target.value })} placeholder="6 KL" required /></label></div></> : <><label>Driver name<input value={driverForm.name} onChange={event => setDriverForm({ ...driverForm, name: event.target.value })} required /></label><label>Phone number<input value={driverForm.phone} onChange={event => setDriverForm({ ...driverForm, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" pattern="[6-9][0-9]{9}" required /></label><label>Driver address<textarea value={driverForm.address} onChange={event => setDriverForm({ ...driverForm, address: event.target.value })} minLength={5} rows={3} required /></label></>}<div className="heading-actions"><Button variant="primary" type="submit" disabled={busy || !vendors.length}>{busy ? 'Creating...' : `Create ${mode === 'fleet' ? 'vehicle' : 'driver'}`}</Button></div></form>{!vendors.length && <div className="empty-state"><Users size={28} /><h3>No vendors available</h3><p>Create a vendor account before registering fleet records.</p></div>}</section></>;
 }
 
 function AdminAccountModal({ role, onClose, onCreated }: { role: 'customer' | 'vendor'; onClose: () => void; onCreated: (account: Awaited<ReturnType<typeof createAdminAccount>>) => void }) {
