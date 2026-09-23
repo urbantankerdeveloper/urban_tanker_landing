@@ -553,6 +553,22 @@ app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req,
   }
 });
 
+app.get('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+  const vendor = await usersCollection.findOne({ uid: req.params.vendorUid, client_id: req.user.clientId, role: 'vendor' }, { projection: { uid: 1 } });
+  if (!vendor) return res.status(404).json({ message: 'Vendor was not found.' });
+  const vehicles = await vehiclesCollection.find({ client_id: req.user.clientId, vendor_uid: req.params.vendorUid }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray();
+  res.json({ vehicles });
+});
+
+app.get('/api/admin/vendors/:vendorUid/drivers', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+  const vendor = await usersCollection.findOne({ uid: req.params.vendorUid, client_id: req.user.clientId, role: 'vendor' }, { projection: { uid: 1 } });
+  if (!vendor) return res.status(404).json({ message: 'Vendor was not found.' });
+  const drivers = await driversCollection.find({ client_id: req.user.clientId, vendor_uid: req.params.vendorUid }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray();
+  res.json({ drivers });
+});
+
 app.post('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });

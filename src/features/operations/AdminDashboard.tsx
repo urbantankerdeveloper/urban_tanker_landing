@@ -4,7 +4,7 @@ import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminOrderHistory, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
+import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminOrderHistory, loadAdminVendorDrivers, loadAdminVendorVehicles, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
 import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
@@ -232,6 +232,34 @@ function AdminVendorsView({ vendors, onCreated, onNotify, onUpdated }: { vendors
 }
 
 function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'drivers'; vendors: AppData['vendors']; onNotify: (message: string) => void }) {
+  const [vendorUid, setVendorUid] = useState('');
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [vehicles, setVehicles] = useState<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean }>>([]);
+  const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean }>>([]);
+  const [vehicleForm, setVehicleForm] = useState({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
+  const [driverForm, setDriverForm] = useState({ name: '', phone: '', address: '', addressProof: '' });
+  useEffect(() => {
+    if (!vendorUid) { setVehicles([]); setDrivers([]); return; }
+    const load = mode === 'fleet' ? loadAdminVendorVehicles(vendorUid).then(items => setVehicles(items.map(item => ({ id: item.id, registrationNumber: item.registrationNumber, vehicleType: item.vehicleType, capacity: item.capacity, active: item.active })))) : loadAdminVendorDrivers(vendorUid).then(setDrivers);
+    void load.catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load vendor records.'));
+  }, [mode, onNotify, vendorUid]);
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!vendorUid) { onNotify('Select the vendor who owns this record.'); return; }
+    setBusy(true);
+    try {
+      if (mode === 'fleet') { await createAdminVehicle(vendorUid, vehicleForm); setVehicles(await loadAdminVendorVehicles(vendorUid)); setVehicleForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' }); onNotify('Vehicle created for the selected vendor.'); }
+      else { await createAdminDriver(vendorUid, driverForm); setDrivers(await loadAdminVendorDrivers(vendorUid)); setDriverForm({ name: '', phone: '', address: '', addressProof: '' }); onNotify('Driver created for the selected vendor.'); }
+      setOpen(false);
+    } catch (error) { onNotify(error instanceof Error ? error.message : `Unable to create ${mode === 'fleet' ? 'vehicle' : 'driver'}.`); }
+    finally { setBusy(false); }
+  };
+  const selectedVendor = vendors.find(vendor => vendor.uid === vendorUid);
+  return <><PageHeader eyebrow={`Admin workspace · ${mode === 'fleet' ? 'Fleet' : 'Drivers'}`} title={mode === 'fleet' ? 'Manage vendor vehicles.' : 'Manage vendor drivers.'} copy="Review and register records owned by each vendor." action={<Button variant="primary" icon={mode === 'fleet' ? Truck : Users} onClick={() => setOpen(true)}>{mode === 'fleet' ? 'Add vehicle' : 'Add driver'}</Button>} /><div className="order-list">{mode === 'fleet' ? vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Truck size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>Vendor-owned fleet vehicle</small></div></article>) : <div className="empty-state"><Truck size={28} /><h3>{vendorUid ? 'No vehicles yet' : 'Select a vendor in Add vehicle'}</h3><p>{vendorUid ? 'Add the first vehicle for this vendor.' : 'Choose the owning vendor when creating a vehicle.'}</p></div> : drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>Vendor-owned driver record</small></div></article>) : <div className="empty-state"><Users size={28} /><h3>{vendorUid ? 'No drivers yet' : 'Select a vendor in Add driver'}</h3><p>{vendorUid ? 'Add the first driver for this vendor.' : 'Choose the owning vendor when creating a driver.'}</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-fleet-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close form">×</button><span className="eyebrow">{mode === 'fleet' ? 'Fleet management' : 'Driver management'}</span><h2 id="admin-fleet-dialog-title">Add {mode === 'fleet' ? 'vehicle' : 'driver'}</h2><p className="modal-copy">Select the vendor owner before creating this record.</p><form className="auth-form" onSubmit={submit} noValidate><label>Owning vendor<select value={vendorUid} onChange={event => setVendorUid(event.target.value)} required><option value="">Select a vendor</option>{vendors.map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name} · {vendor.email}</option>)}</select></label>{mode === 'fleet' ? <><label>Registration number<input value={vehicleForm.registrationNumber} onChange={event => setVehicleForm({ ...vehicleForm, registrationNumber: event.target.value.toUpperCase() })} required /></label><label>Vehicle type<select value={vehicleForm.vehicleType} onChange={event => setVehicleForm({ ...vehicleForm, vehicleType: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={vehicleForm.capacity} onChange={event => setVehicleForm({ ...vehicleForm, capacity: event.target.value })} required /></label></> : <><label>Driver name<input value={driverForm.name} onChange={event => setDriverForm({ ...driverForm, name: event.target.value })} required /></label><label>Phone number<input value={driverForm.phone} onChange={event => setDriverForm({ ...driverForm, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" required /></label><label>Driver address<textarea value={driverForm.address} onChange={event => setDriverForm({ ...driverForm, address: event.target.value })} minLength={5} required /></label></>}<div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={busy || !vendorUid}>{busy ? 'Creating...' : `Create ${mode === 'fleet' ? 'vehicle' : 'driver'}`}</Button></div></form></section></div>}</>;
+}
+
+function AdminFleetDriversForm({ mode, vendors, onNotify }: { mode: 'fleet' | 'drivers'; vendors: AppData['vendors']; onNotify: (message: string) => void }) {
   const [vendorUid, setVendorUid] = useState('');
   const [vehicleForm, setVehicleForm] = useState({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
   const [driverForm, setDriverForm] = useState({ name: '', phone: '', address: '', addressProof: '' });

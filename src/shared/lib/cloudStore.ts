@@ -285,6 +285,15 @@ export async function createAdminDriver(vendorUid: string, input: { name: string
   if (!response.ok) throw new Error(payload.message || 'Unable to create driver.');
 }
 
+export async function loadAdminVendorDrivers(vendorUid: string): Promise<Array<{ id: string; name: string; phone: string; active: boolean }>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vendors/${encodeURIComponent(vendorUid)}/drivers`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { drivers?: Array<{ id: string; name: string; phone?: string; active: boolean }>; message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to load vendor drivers.');
+  return (payload.drivers || []).map(driver => ({ id: driver.id, name: driver.name, phone: driver.phone || '', active: driver.active }));
+}
+
 export async function setVendorDriverStatus(driverId: string, active: boolean): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
@@ -315,6 +324,15 @@ export async function createAdminVehicle(vendorUid: string, input: { registratio
   const payload = await response.json().catch(() => ({})) as { vehicle?: { id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; image_url?: string }; message?: string };
   if (!response.ok || !payload.vehicle) throw new Error(payload.message || 'Unable to create vehicle.');
   return { id: payload.vehicle.id, registrationNumber: payload.vehicle.registration_number, vehicleType: payload.vehicle.vehicle_type, capacity: payload.vehicle.capacity || '', active: payload.vehicle.active, driverId: '', driverName: '', driverPhone: '', driverActive: false, imageUrl: payload.vehicle.image_url };
+}
+
+export async function loadAdminVendorVehicles(vendorUid: string): Promise<Vehicle[]> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vendors/${encodeURIComponent(vendorUid)}/vehicles`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { vehicles?: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; image_url?: string }>; message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to load vendor vehicles.');
+  return (payload.vehicles || []).map(vehicle => ({ id: vehicle.id, registrationNumber: vehicle.registration_number, vehicleType: vehicle.vehicle_type, capacity: vehicle.capacity || '', active: vehicle.active, driverId: '', driverName: '', driverPhone: '', driverActive: false, imageUrl: vehicle.image_url }));
 }
 
 export async function setVendorVehicleActive(vehicleId: string, active: boolean): Promise<void> {
