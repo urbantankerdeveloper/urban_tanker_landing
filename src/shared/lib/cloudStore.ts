@@ -4,6 +4,7 @@ import { API_BASE_URL } from './apiConfig';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent, saveEncryptedState } from './secureCache';
 import type { AppData, Profile, Role, Vehicle, Vendor } from './types';
 import type { CouponContent } from './content';
+import { notificationsResponseSchema, orderHistoryItemSchema, parseApiResponse } from './apiSchemas';
 
 export type CloudState = Record<string, unknown>;
 export type CloudStateHandler = (state: CloudState) => void;
@@ -64,7 +65,7 @@ export async function loadNotifications(): Promise<{ unreadCount: number; notifi
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/notifications`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
   if (!response.ok) throw new Error('Unable to load notifications.');
-  return await response.json() as { unreadCount: number; notifications: NotificationItem[] };
+  return parseApiResponse(notificationsResponseSchema, await response.json());
 }
 
 export async function markNotificationsRead(notificationIds: string[]): Promise<void> {
@@ -361,7 +362,10 @@ export async function loadAdminOrderHistory(orderId: string): Promise<OrderHisto
   const response = await fetch(`${API_BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/history`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
   const payload = await response.json().catch(() => ({})) as { history?: OrderHistoryItem[]; message?: string };
   if (!response.ok) throw new Error(payload.message || 'Unable to load order history.');
-  return payload.history || [];
+  return (payload.history || []).map(item => {
+    const parsed = parseApiResponse(orderHistoryItemSchema, item);
+    return { ...parsed, timestamp: parsed.timestamp || new Date() };
+  });
 }
 
 export async function createAdminAccount(input: AdminAccountInput): Promise<{ uid: string; role: AdminAccountInput['role']; name: string; email: string; phone: string; status: string; available: boolean }> {

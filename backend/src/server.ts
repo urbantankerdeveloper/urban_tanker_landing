@@ -373,13 +373,37 @@ app.post('/api/admin/orders/:orderId/notify-vendors', authenticateToken, async (
   }
 });
 
+app.get('/api/admin/orders', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
+    const filter: Record<string, any> = { client_id: req.user.clientId };
+    if (typeof req.query.before === 'string' && !Number.isNaN(new Date(req.query.before).valueOf())) filter.updated_at = { $lt: new Date(req.query.before) };
+    const orders = await ordersCollection.find(filter, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ updated_at: -1, id: 1 }).limit(limit + 1).toArray();
+    const hasMore = orders.length > limit;
+    const page = hasMore ? orders.slice(0, limit) : orders;
+    const nextCursor = hasMore && page.length ? page[page.length - 1].updated_at : null;
+    res.set('Cache-Control', 'no-store');
+    res.json({ orders: page, nextCursor, hasMore });
+  } catch (error) {
+    console.error('Admin order pagination error:', error);
+    res.status(500).json({ message: 'Unable to load paginated orders.' });
+  }
+});
+
 app.get('/api/admin/orders/:orderId/history', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const order = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { _id: 0, id: 1 } });
     if (!order) return res.status(404).json({ message: 'Order was not found.' });
-    const history = await orderHistoryCollection.find({ client_id: req.user.clientId, order_id: req.params.orderId }, { projection: { _id: 0 } }).sort({ timestamp: 1 }).toArray();
-    res.json({ orderId: req.params.orderId, history });
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const historyFilter: Record<string, any> = { client_id: req.user.clientId, order_id: req.params.orderId };
+    if (typeof req.query.before === 'string' && !Number.isNaN(new Date(req.query.before).valueOf())) historyFilter.timestamp = { $lt: new Date(req.query.before) };
+    const history = await orderHistoryCollection.find(historyFilter, { projection: { _id: 0 } }).sort({ timestamp: -1 }).limit(limit + 1).toArray();
+    const hasMore = history.length > limit;
+    const page = (hasMore ? history.slice(0, limit) : history).reverse();
+    const nextCursor = hasMore && history.length ? history[history.length - 1].timestamp : null;
+    res.json({ orderId: req.params.orderId, history: page, nextCursor, hasMore });
   } catch (error) {
     console.error('Order history lookup error:', error);
     res.status(500).json({ message: 'Unable to load order history.' });
@@ -454,6 +478,10 @@ app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req,
     const active = req.body.active === true;
     const status = active ? 'active' : 'inactive';
     const filter = { uid: req.params.vendorUid, client_id: req.user.clientId };
+    if (!active) {
+      const activeOrder = await ordersCollection.findOne({ client_id: req.user.clientId, assigned_vendor_uid: req.params.vendorUid, status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] } }, { projection: { _id: 0, id: 1 } });
+      if (activeOrder) return res.status(409).json({ message: `Vendor cannot be set inactive while order ${activeOrder.id} is active.` });
+    }
     const vendorResult = await vendorsCollection.updateOne(filter, { $set: { status, available: active, updated_at: new Date() } });
     if (!vendorResult.matchedCount) return res.status(404).json({ message: 'Vendor was not found.' });
     await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, updated_at: new Date() } });
@@ -596,6 +624,10 @@ app.patch('/api/vendor/availability', authenticateToken, async (req, res) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const status = req.body.status === 'active' || req.body.available === true ? 'active' : 'inactive';
     const available = status === 'active';
+    if (!available) {
+      const activeOrder = await ordersCollection.findOne({ client_id: req.user.clientId, assigned_vendor_uid: req.user.uid, status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] } }, { projection: { _id: 0, id: 1 } });
+      if (activeOrder) return res.status(409).json({ message: `You cannot go offline while order ${activeOrder.id} is active.` });
+    }
     await vendorsCollection.updateOne(
       { uid: req.user.uid, client_id: req.user.clientId },
       {

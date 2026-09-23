@@ -23,6 +23,6 @@ export function Button({ children, variant = '', onClick, icon: Icon, type = 'bu
   return <button type={type} onClick={onClick} className={`button ${variant}`} disabled={disabled}>{Icon && <Icon size={16} />}{children}</button>;
 }
 
-export function UserBadge({ initials = 'AM', onClick }) {
+export function UserBadge({ initials = 'AM', onClick }: { initials?: string; onClick?: () => void }) {
   return <button className="avatar" onClick={onClick} aria-label="Sign out and return to login">{initials}</button>;
 }

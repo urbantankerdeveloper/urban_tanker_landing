@@ -133,7 +133,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     }
   };
   if (view === 'customers') return <AdminCustomersView customers={dashboard?.customers || []} onCreated={addAccountToDashboard} />;
-  if (view === 'vendors') return <AdminVendorsView vendors={dashboard?.vendors || data.vendors} onCreated={addAccountToDashboard} onUpdated={(uid, status, available) => {
+  if (view === 'vendors') return <AdminVendorsView vendors={dashboard?.vendors || data.vendors} onCreated={addAccountToDashboard} onNotify={notify} onUpdated={(uid, status, available) => {
     const updateVendor = (vendor: AppData['vendors'][number]) => vendor.uid === uid ? { ...vendor, status, available } : vendor;
     setDashboard(current => current ? { ...current, vendors: current.vendors.map(updateVendor) } : current);
     update({ vendors: data.vendors.map(updateVendor) });
@@ -194,7 +194,7 @@ function AdminCustomersView({ customers, onCreated }: { customers: AdminCustomer
   </>;
 }
 
-function AdminVendorsView({ vendors, onCreated, onUpdated }: { vendors: AppData['vendors']; onCreated: (account: Awaited<ReturnType<typeof createAdminAccount>>) => void; onUpdated: (uid: string, status: string, available: boolean) => void }) {
+function AdminVendorsView({ vendors, onCreated, onNotify, onUpdated }: { vendors: AppData['vendors']; onCreated: (account: Awaited<ReturnType<typeof createAdminAccount>>) => void; onNotify: (message: string) => void; onUpdated: (uid: string, status: string, available: boolean) => void }) {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [busyUid, setBusyUid] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -208,8 +208,8 @@ function AdminVendorsView({ vendors, onCreated, onUpdated }: { vendors: AppData[
     try {
       const result = await updateAdminVendorStatus(vendor.uid, active);
       onUpdated(result.uid, result.status, result.available);
-    } catch {
-      // The parent dashboard displays the existing status until the next refresh.
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Unable to update vendor status.');
     } finally {
       setBusyUid(null);
     }

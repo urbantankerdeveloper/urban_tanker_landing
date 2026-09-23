@@ -1170,6 +1170,34 @@ label.input-icon input {
 
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { overscroll-behavior-y: none; }
+.error-state-screen {
+	display: grid;
+	place-items: center;
+	min-height: 100vh;
+	padding: 24px;
+	background: var(--paper);
+}
+
+.error-state-panel {
+	display: grid;
+	gap: 10px;
+	width: min(440px, 100%);
+	padding: 30px;
+	background: var(--white);
+	border: 1px solid var(--line);
+	border-radius: 14px;
+	box-shadow: var(--shadow);
+}
+
+.error-state-panel h1,
+.error-state-panel p {
+	margin: 0;
+}
+
+.error-state-panel p {
+	color: var(--muted);
+	font-size: 12px;
+}
 .sidebar-toggle {
 	position: absolute;
 	top: 12px;
