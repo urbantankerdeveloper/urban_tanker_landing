@@ -6,6 +6,7 @@ import { cancelCustomerOrder, createCustomerSubscription, loadCustomerInvoices, 
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import { LiveMapModal } from '../../shared/components/LiveMapModal';
+import { WorkspaceSkeleton } from '../../shared/components/LoadingSkeleton';
 import { CustomerLanding } from './CustomerLanding';
 import { useEffect, useState, type FormEvent } from 'react';
 import { io } from 'socket.io-client';
@@ -18,10 +19,11 @@ const sewagePrices: Record<string, number> = { '3 KL': 1800, '6 KL': 2300, '9 KL
 export function CustomerPortal() {
   const { data, active, setActive: onNavigate, notify: onNotify, bookingDraft: booking, setBookingDraft: set, setCheckoutOpen, update } = useAppStore();
   const [acceptedOrder, setAcceptedOrder] = useState<{ orderId: string; vendorName: string } | null>(null);
+  const [ordersLoading, setOrdersLoading] = useState(true);
   useEffect(() => {
     void loadCustomerOrders().then(orders => {
       useAppStore.setState(state => ({ data: { ...state.data, orders } }));
-    }).catch(() => undefined);
+    }).catch(() => undefined).finally(() => setOrdersLoading(false));
   }, []);
   useEffect(() => {
     const token = getAuthToken();
@@ -44,6 +46,7 @@ export function CustomerPortal() {
   const cancelOrder = async (orderId: string) => { try { await cancelCustomerOrder(orderId, 'Cancelled from customer portal.'); const orders = await loadCustomerOrders(); useAppStore.setState(state => ({ data: { ...state.data, orders } })); onNotify('Order cancelled successfully.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to cancel the order.'); } };
   const rescheduleOrder = async (orderId: string, scheduledDate: string, scheduledSlot: string) => { try { await rescheduleCustomerOrder(orderId, scheduledDate, scheduledSlot); const orders = await loadCustomerOrders(); useAppStore.setState(state => ({ data: { ...state.data, orders } })); onNotify('Order rescheduled successfully.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to reschedule the order.'); } };
   const rateOrder = async (orderId: string) => { const rating = Number(window.prompt('Rate this delivery from 1 to 5:')); if (!Number.isInteger(rating) || rating < 1 || rating > 5) return; const feedback = window.prompt('Optional feedback:') || ''; try { await rateCustomerOrder(orderId, rating, feedback); const orders = await loadCustomerOrders(); useAppStore.setState(state => ({ data: { ...state.data, orders } })); onNotify('Thank you for your feedback.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to save feedback.'); } };
+  if (ordersLoading) return <WorkspaceSkeleton role="customer" />;
   const content = active === 'book' ? <BookingFormWithSavedAddresses booking={booking} set={set} onSubmit={submitBooking} /> : active === 'orders' ? <OrdersView orders={data.orders} onCancel={cancelOrder} onReschedule={rescheduleOrder} onRate={rateOrder} /> : active === 'track' ? <TrackingView order={activeOrder} /> : active === 'subscriptions' ? <SubscriptionsView onNotify={onNotify} /> : active === 'invoices' ? <InvoiceHistoryView onNotify={onNotify} /> : active === 'support' ? <SupportView data={data} onNotify={onNotify} /> : <CustomerLanding order={activeOrder} data={data} onNavigate={onNavigate} />;
   return <>{content}{active === 'orders' && <DeliveryProofGallery orders={data.orders} />}{acceptedOrder && <CustomerAcceptanceModal orderId={acceptedOrder.orderId} vendorName={acceptedOrder.vendorName} onClose={() => setAcceptedOrder(null)} onTrack={() => { setAcceptedOrder(null); onNavigate('track'); }} />}</>;
 }

@@ -61,7 +61,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
       const [orders, vendors, customerDocuments] = await Promise.all([
         ordersCollection.find({ client_id: clientId }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ created: -1 }).limit(500).toArray(),
         vendorsCollection.find({ client_id: clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
-        usersCollection.find({ client_id: clientId, role: 'customer' }, { projection: { _id: 0, uid: 1, email: 1, display_name: 1, phone_number: 1, status: 1, created_at: 1, updated_at: 1 } }).sort({ created_at: -1 }).limit(500).toArray(),
+        usersCollection.find({ role: 'customer', $or: [{ client_id: clientId }, { client_id: { $exists: false } }] }, { projection: { _id: 0, uid: 1, email: 1, display_name: 1, phone_number: 1, status: 1, created_at: 1, updated_at: 1 } }).sort({ created_at: -1 }).toArray(),
       ]);
       const revenue = orders.filter((order: any) => order.status === 'Delivered').reduce((total: number, order: any) => total + Number(order.amount || 0), 0);
       const delivered = orders.filter((order: any) => order.status === 'Delivered').length;
