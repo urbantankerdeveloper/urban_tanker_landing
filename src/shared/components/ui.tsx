@@ -13,8 +13,10 @@ export function StatCard({ icon: Icon, label, value, detail, tone = '' }: StatCa
 }
 
 export function Status({ children }: { children: ReactNode }) {
-  const tone = String(children).toLowerCase().replace(/ /g, '-');
-  return <span className={`status status-${tone}`}><span />{children}</span>;
+  const rawLabel = String(children);
+  const label = rawLabel === 'Vendor assigned' ? 'Assigned' : rawLabel;
+  const tone = rawLabel.toLowerCase().replace(/ /g, '-');
+  return <span className={`status status-${tone}`}><span />{label}</span>;
 }
 
 export function Button({ children, variant = '', onClick, icon: Icon, type = 'button', disabled = false }: ButtonProps) {

@@ -3,6 +3,7 @@ import { getCurrentUser } from '../../features/auth/auth';
 import { API_BASE_URL } from './apiConfig';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent, saveEncryptedState } from './secureCache';
 import type { AppData, Profile, Role, Vehicle, Vendor } from './types';
+import type { CouponContent } from './content';
 
 export type CloudState = Record<string, unknown>;
 export type CloudStateHandler = (state: CloudState) => void;
@@ -390,6 +391,23 @@ export async function updateAdminVendorStatus(vendorUid: string, active: boolean
   const payload = await response.json().catch(() => ({})) as { uid?: string; status?: string; available?: boolean; message?: string };
   if (!response.ok || !payload.uid) throw new Error(payload.message || 'Unable to update vendor status.');
   return { uid: payload.uid, status: payload.status || (active ? 'active' : 'inactive'), available: payload.available === true };
+}
+
+export async function createAdminCoupon(input: { code: string; label: string; discount: number; service?: string; firstBooking?: boolean }): Promise<CouponContent> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/coupons`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { coupon?: CouponContent; message?: string };
+  if (!response.ok || !payload.coupon) throw new Error(payload.message || 'Unable to create coupon.');
+  return payload.coupon;
+}
+
+export async function updateAdminCouponStatus(code: string, active: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/coupons/${encodeURIComponent(code)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update coupon status.');
 }
 
 export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string; rejectionReason?: string; deliveryProof?: string } = {}): Promise<void> {

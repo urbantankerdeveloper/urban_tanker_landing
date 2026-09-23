@@ -218,6 +218,45 @@ app.get('/api/content/:clientId', async (req, res) => {
   }
 });
 
+app.post('/api/admin/coupons', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const code = String(req.body.code || '').trim().toUpperCase();
+    const label = String(req.body.label || '').trim();
+    const service = typeof req.body.service === 'string' ? req.body.service.trim() : '';
+    const discount = Number(req.body.discount);
+    const firstBooking = req.body.firstBooking === true;
+    if (!/^[A-Z0-9_-]{3,30}$/.test(code) || !label || !Number.isFinite(discount) || discount <= 0) return res.status(400).json({ message: 'Enter a valid code, label, and discount.' });
+    const content = await contentCollection.findOne({ client_id: req.user.clientId }, { projection: { _id: 1 } });
+    if (!content) return res.status(404).json({ message: 'Content configuration was not found.' });
+    const duplicate = await contentCollection.findOne({ client_id: req.user.clientId, coupons: { $elemMatch: { code } } }, { projection: { _id: 1 } });
+    if (duplicate) return res.status(409).json({ message: 'A coupon with that code already exists.' });
+    const coupon = { code, label, discount, service: service || undefined, firstBooking, active: true };
+    const couponUpdate: Record<string, any> = { $push: { coupons: coupon }, $set: { updated_at: new Date() } };
+    await contentCollection.updateOne({ client_id: req.user.clientId }, couponUpdate);
+    contentCache.delete(req.user.clientId);
+    res.status(201).json({ coupon });
+  } catch (error) {
+    console.error('Coupon creation error:', error);
+    res.status(500).json({ message: 'Unable to create coupon.' });
+  }
+});
+
+app.patch('/api/admin/coupons/:code/status', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const code = String(req.params.code || '').trim().toUpperCase();
+    const active = req.body.active === true;
+    const result = await contentCollection.updateOne({ client_id: req.user.clientId, 'coupons.code': code }, { $set: { 'coupons.$.active': active, updated_at: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ message: 'Coupon was not found.' });
+    contentCache.delete(req.user.clientId);
+    res.json({ code, active });
+  } catch (error) {
+    console.error('Coupon status update error:', error);
+    res.status(500).json({ message: 'Unable to update coupon status.' });
+  }
+});
+
 app.get('/api/vendor/dashboard', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
