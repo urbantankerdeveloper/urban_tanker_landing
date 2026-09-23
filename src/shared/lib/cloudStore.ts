@@ -262,6 +262,35 @@ export async function loadVendorVehicles(): Promise<Vehicle[]> {
   return (result.vehicles || []).map(vehicle => ({ id: vehicle.id, registrationNumber: vehicle.registration_number, vehicleType: vehicle.vehicle_type, capacity: vehicle.capacity || '', active: vehicle.active, driverId: vehicle.driver_id || '', driverName: vehicle.driver_name || '', driverPhone: vehicle.driver_phone || '', driverActive: vehicle.driver_active === true, imageUrl: vehicle.image_url, registrationExpiry: vehicle.registration_expiry, insuranceExpiry: vehicle.insurance_expiry, permitExpiry: vehicle.permit_expiry }));
 }
 
+export async function loadVendorDrivers(): Promise<Array<{ id: string; name: string; phone: string; active: boolean }>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/drivers`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  if (!response.ok) throw new Error('Unable to load drivers.');
+  return ((await response.json()) as { drivers?: Array<{ id: string; name: string; phone?: string; address?: string; address_proof?: string; active: boolean }> }).drivers?.map(driver => ({ id: driver.id, name: driver.name, phone: driver.phone || '', address: driver.address || '', addressProof: driver.address_proof || '', active: driver.active })) || [];
+}
+
+export async function createVendorDriver(input: { name: string; phone: string; address?: string; addressProof?: string }): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/drivers`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ ...input, address: input.address || '', addressProof: input.addressProof || '' }) });
+  if (!response.ok) throw new Error('Unable to create driver.');
+}
+
+export async function setVendorDriverStatus(driverId: string, active: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/drivers/${encodeURIComponent(driverId)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
+  if (!response.ok) throw new Error('Unable to update driver status.');
+}
+
+export async function deleteVendorDriver(driverId: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/drivers/${encodeURIComponent(driverId)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  if (!response.ok) throw new Error('Unable to delete driver.');
+}
+
 export async function createVendorVehicle(input: { registrationNumber: string; vehicleType: string; capacity: string; driverName: string; driverPhone: string; imageUrl?: string; registrationExpiry?: string; insuranceExpiry?: string; permitExpiry?: string }): Promise<Vehicle> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');

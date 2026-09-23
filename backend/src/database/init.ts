@@ -45,6 +45,8 @@ const collections = {
         vendor_uid: { bsonType: 'string' },
         name: { bsonType: 'string' },
         phone: { bsonType: 'string' },
+        address: { bsonType: 'string' },
+        address_proof: { bsonType: 'string' },
         active: { bsonType: 'bool' },
         updated_at: { bsonType: 'date' },
       },

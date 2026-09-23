@@ -6,6 +6,7 @@ import {
     Package,
     Phone,
     ShieldCheck,
+    Users,
     X,
 } from "lucide-react";
 import type { AppData, Order, OrderStatus, Vehicle, Workspace } from "../../shared/lib/types";
@@ -13,12 +14,13 @@ import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui
 import { Pagination } from "../../shared/components/Pagination";
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
-import { createVendorMaintenance, createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorMaintenance, loadVendorPayouts, loadVendorVehicles, saveDriverAttendance, setVendorAvailability, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
+import { createVendorDriver, createVendorMaintenance, createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorDrivers, loadVendorMaintenance, loadVendorPayouts, loadVendorVehicles, saveDriverAttendance, setVendorAvailability, setVendorDriverStatus, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
 import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "react";
 import { io, type Socket } from "socket.io-client";
 import { API_BASE_URL } from "../../shared/lib/apiConfig";
 import { getAuthToken, getCurrentUser } from "../../features/auth/auth";
 import { FleetExpiryPanel } from './FleetExpiryPanel';
+import { VendorDriversWithProofView as VendorDriversFormView } from './VendorDriversWithProofView';
 
 const stages: OrderStatus[] = [
     "Created",
@@ -39,6 +41,22 @@ async function compressImage(file: File): Promise<string> {
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close();
     return canvas.toDataURL('image/jpeg', 0.78);
+}
+
+function normalizeRegistrationInput(value: string): string {
+    const raw = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+    const state = raw.slice(0, 2).replace(/[^A-Z]/g, '');
+    const rto = raw.slice(2, 4).replace(/[^0-9]/g, '');
+    const series = raw.slice(4, 6).replace(/[^A-Z]/g, '');
+    const number = raw.slice(6, 10).replace(/[^0-9]/g, '');
+    return [state, rto, series, number].filter(Boolean).join(' ');
+}
+
+function normalizeCapacityInput(value: string): string {
+    const raw = value.toUpperCase().replace(/[^0-9KL]/g, '');
+    const digits = raw.match(/^\d{0,3}/)?.[0] || '';
+    const suffix = raw.slice(digits.length).replace(/[^KL]/g, '').startsWith('KL') ? ' KL' : raw.slice(digits.length).includes('K') ? ' K' : '';
+    return `${digits}${suffix}`;
 }
 export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const {
@@ -284,7 +302,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         const activeOrder = vendorOrders.find(item => item.status !== "Delivered");
         if (view === "orders") return <VendorOrdersView orders={vendorOrders} />;
         if (view === "track") return <VendorTrackingView order={activeOrder} orders={vendorOrders} />;
-        if (view === "fleet") return <><FleetExpiryPanel onNotify={onNotify} /><VehicleFleetView vehicles={vehicles} setVehicles={setVehicles} onNotify={onNotify} /></>;
+        if (view === "fleet") return <><FleetExpiryPanel onNotify={onNotify} /><VehicleFleetManagementView vehicles={vehicles} setVehicles={setVehicles} onNotify={onNotify} /></>;
+        if (view === "drivers") return <VendorDriversFormView onNotify={onNotify} />;
         if (view === "maintenance") return <VendorMaintenanceView vehicles={vehicles} onNotify={onNotify} />;
         if (view === "attendance") return <VendorAttendanceView vehicles={vehicles} onNotify={onNotify} />;
         if (view === "payouts") return <VendorPayoutsView onNotify={onNotify} />;
@@ -450,6 +469,27 @@ function VendorMaintenanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; on
     return <><PageHeader eyebrow="Vendor workspace · Maintenance" title="Keep the fleet ready." copy="Schedule maintenance work before it interrupts customer deliveries." /><section className="data-surface"><form className="auth-form" onSubmit={submit}><div className="field-row"><label>Vehicle<select value={form.vehicleId} onChange={event => setForm({ ...form, vehicleId: event.target.value })}>{vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.registrationNumber}</option>)}</select></label><label>Scheduled date<input type="date" value={form.scheduledAt} onChange={event => setForm({ ...form, scheduledAt: event.target.value })} required /></label></div><div className="field-row"><label>Description<input value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="Service, inspection, repair" required /></label><label>Estimated cost<input type="number" min="0" value={form.cost} onChange={event => setForm({ ...form, cost: event.target.value })} /></label></div><Button variant="primary" type="submit" disabled={!vehicles.length}>Schedule maintenance</Button></form></section><section className="data-surface"><div className="section-heading"><div><span className="eyebrow">Maintenance calendar</span><h2>{records.length} records</h2></div></div>{records.length ? records.map(record => <article className="order-row" key={String(record.id)}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{String(record.description)}</b><Status>{String(record.status)}</Status></div><span>{String(record.scheduled_at)}</span><small>Estimated cost: {String(record.cost || 0)}</small></div></article>) : <div className="empty-state"><Package size={28} /><h3>No maintenance scheduled</h3></div>}</section></>;
 }
 
+function VendorDriversManagementView({ onNotify }: { onNotify: (message: string) => void }) {
+    const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean }>>([]);
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({ name: '', phone: '', address: '' });
+    const refresh = () => void loadVendorDrivers().then(setDrivers).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load drivers.'));
+    useEffect(refresh, [onNotify]);
+    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const name = form.name.trim(); const phone = form.phone.trim(); const address = form.address.trim(); if (name.length < 2) { onNotify('Enter a valid driver name.'); return; } if (!/^[6-9]\d{9}$/.test(phone)) { onNotify('Enter a valid 10-digit Indian mobile number.'); return; } if (address.length < 5) { onNotify('Enter the driver address.'); return; } try { await createVendorDriver({ name, phone, address }); setForm({ name: '', phone: '', address: '' }); setOpen(false); refresh(); onNotify('Driver added to your team.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to create driver.'); } };
+    const toggle = async (driver: typeof drivers[number]) => { try { await setVendorDriverStatus(driver.id, !driver.active); refresh(); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to update driver status.'); } };
+    return <><PageHeader eyebrow="Vendor workspace · Drivers" title="Manage your drivers." copy="Create and manage drivers independently from vehicles. Assign both only when accepting an order." action={<Button variant="primary" icon={Users} onClick={() => setOpen(true)}>Add driver</Button>} /><div className="order-list">{drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>Vehicle assigned during order acceptance</small></div><Button variant={driver.active ? 'quiet' : 'primary'} onClick={() => void toggle(driver)}>{driver.active ? 'Set inactive' : 'Set active'}</Button></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>Add a driver before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="driver-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close driver form">×</button><span className="eyebrow">Driver management</span><h2 id="driver-dialog-title">Add driver</h2><p className="modal-copy">Driver details stay independent from fleet vehicles.</p><form className="auth-form" onSubmit={submit} noValidate><label>Driver name<input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} minLength={2} required /></label><label>Phone number<input value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" pattern="[6-9][0-9]{9}" placeholder="10-digit mobile number" required /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add driver</Button></div></form></section></div>}</>;
+}
+
+function VendorDriversView({ onNotify }: { onNotify: (message: string) => void }) {
+    const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean }>>([]);
+    const [form, setForm] = useState({ name: '', phone: '' });
+    const refresh = () => void loadVendorDrivers().then(setDrivers).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load drivers.'));
+    useEffect(refresh, [onNotify]);
+    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const name = form.name.trim(); const phone = form.phone.trim(); if (name.length < 2) { onNotify('Enter a valid driver name.'); return; } if (!/^[6-9]\d{9}$/.test(phone)) { onNotify('Enter a valid 10-digit Indian mobile number.'); return; } try { await createVendorDriver({ name, phone }); setForm({ name: '', phone: '' }); refresh(); onNotify('Driver added to your team.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to create driver.'); } };
+    const toggle = async (driver: typeof drivers[number]) => { try { await setVendorDriverStatus(driver.id, !driver.active); refresh(); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to update driver status.'); } };
+    return <><PageHeader eyebrow="Vendor workspace · Drivers" title="Manage your drivers." copy="Create and manage drivers independently from vehicles. Assign both only when accepting an order." /><section className="data-surface"><form className="auth-form" onSubmit={submit}><div className="field-row"><label>Driver name<input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required /></label><label>Phone number<input value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" placeholder="10-digit mobile number" /></label></div><Button variant="primary" type="submit">Add driver</Button></form></section><section className="data-surface"><div className="section-heading"><div><span className="eyebrow">Driver team</span><h2>{drivers.length} drivers</h2></div></div>{drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span></div><Button variant={driver.active ? 'quiet' : 'primary'} onClick={() => void toggle(driver)}>{driver.active ? 'Set inactive' : 'Set active'}</Button></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>Add drivers separately from your vehicles.</p></div>}</section></>;
+}
+
 function VendorAttendanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; onNotify: (message: string) => void }) {
     const [form, setForm] = useState({ driverId: vehicles[0]?.driverId || '', date: new Date().toISOString().slice(0, 10), status: 'present', notes: '' });
     const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); try { await saveDriverAttendance(form); onNotify('Driver attendance saved.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to save attendance.'); } };
@@ -479,12 +519,94 @@ function AcceptOrderSelectionModal({ vehicles, selectedVehicleId, selectedDriver
     }}><option value="">Select a vehicle</option>{vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.registrationNumber} · {vehicle.vehicleType}</option>)}</select></label>{selectedVehicle && <label>Driver<select value={selectedDriverId} onChange={event => onDriverChange(event.target.value)}><option value="">Select a driver</option>{drivers.map(driver => <option key={driver.id} value={driver.id}>{driver.name} · {driver.phone}</option>)}</select></label>}{!selectedVehicle && <p className="form-error">Add a vehicle with an active driver before accepting this order.</p>}<div className="heading-actions"><Button variant="quiet" onClick={onCancel} disabled={busy}>Cancel</Button><Button variant="primary" onClick={onConfirm} disabled={busy || !selectedVehicle || !selectedDriverId}>{busy ? "Updating..." : "Confirm acceptance"}</Button></div></div></section></div>;
 }
 
+function VehicleFleetManagementView({ vehicles, setVehicles, onNotify }: { vehicles: Vehicle[]; setVehicles: Dispatch<React.SetStateAction<Vehicle[]>>; onNotify: (message: string) => void }) {
+    const [open, setOpen] = useState(false);
+    const [form, setForm] = useState({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
+    const registrationPattern = /^[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}$/;
+    useEffect(() => {
+        if (!open) return;
+        const select = document.querySelector<HTMLSelectElement>('.modal[aria-labelledby="vehicle-dialog-title"] select');
+        select?.querySelectorAll('option').forEach(option => { if (option.value === 'Tanker' || option.textContent === 'Tanker') option.remove(); });
+    }, [open]);
+    useEffect(() => {
+        if (!open) return;
+        const input = document.querySelector<HTMLInputElement>('.modal[aria-labelledby="vehicle-dialog-title"] input');
+        if (!input) return;
+        const normalize = () => {
+            const value = normalizeRegistrationInput(input.value);
+            if (input.value !== value) {
+                input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        };
+        input.addEventListener('input', normalize);
+        return () => input.removeEventListener('input', normalize);
+    }, [open]);
+    useEffect(() => {
+        if (!open) return;
+        const inputs = document.querySelectorAll<HTMLInputElement>('.modal[aria-labelledby="vehicle-dialog-title"] input');
+        const input = inputs[1];
+        if (!input) return;
+        const normalize = () => {
+            const value = normalizeCapacityInput(input.value);
+            if (input.value !== value) {
+                input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        };
+        input.addEventListener('input', normalize);
+        return () => input.removeEventListener('input', normalize);
+    }, [open]);
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const registrationNumber = form.registrationNumber.trim().toUpperCase();
+        if (!registrationPattern.test(registrationNumber)) { onNotify('Use registration format: TN12 AB 9847.'); return; }
+        if (!form.vehicleType) { onNotify('Select a vehicle type.'); return; }
+        try { const vehicle = await createVendorVehicle({ ...form, registrationNumber, driverName: '', driverPhone: '' }); setVehicles(items => [vehicle, ...items]); setForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' }); setOpen(false); onNotify('Vehicle added to your fleet.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to add vehicle.'); }
+    };
+    const remove = async (vehicle: Vehicle) => { try { await deleteVendorVehicle(vehicle.id); setVehicles(items => items.filter(item => item.id !== vehicle.id)); onNotify('Vehicle removed from your fleet.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to delete vehicle.'); } };
+    return <><PageHeader eyebrow="Vendor workspace · Fleet" title="Manage your vehicles." copy="Add vehicles independently. Assign a driver only when accepting an order." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)}>Add vehicle</Button>} /><div className="order-list">{vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>{vehicle.driverName ? `Assigned driver: ${vehicle.driverName}` : 'No driver assigned'}</small></div><Button variant={vehicle.active ? 'quiet' : 'primary'} onClick={() => void setVendorVehicleActive(vehicle.id, !vehicle.active).then(() => setVehicles(items => items.map(item => item.id === vehicle.id ? { ...item, active: !vehicle.active } : item))).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to update vehicle.'))}>{vehicle.active ? 'Set inactive' : 'Set active'}</Button><Button variant="quiet" onClick={() => void remove(vehicle)}>Delete</Button></article>) : <div className="empty-state"><Package size={28} /><h3>No vehicles yet</h3><p>Add a vehicle before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close vehicle form">×</button><span className="eyebrow">Fleet management</span><h2 id="vehicle-dialog-title">Add vehicle</h2><form className="auth-form" onSubmit={submit} noValidate><label>Registration number<input value={form.registrationNumber} onChange={event => setForm({ ...form, registrationNumber: event.target.value.toUpperCase() })} placeholder="TN12 AB 9847" pattern="[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}" required /><small>State code (2 letters) - RTO number (2 digits) - 2 letters - vehicle number (4 digits).</small></label><label>Vehicle type<select value={form.vehicleType} onChange={event => setForm({ ...form, vehicleType: event.target.value })} required><option value="">Select vehicle type</option><option>Tanker</option><option>Water tanker</option><option>Sewage tanker</option></select></label><label>Capacity<input value={form.capacity} onChange={event => setForm({ ...form, capacity: event.target.value })} placeholder="6 KL" /></label><label>Vehicle image <small>(optional)</small><input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2_000_000) { onNotify('Vehicle image must be smaller than 2 MB.'); return; } void compressImage(file).then(imageUrl => setForm(current => ({ ...current, imageUrl }))).catch(() => onNotify('Unable to process vehicle image.')); }} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add vehicle</Button></div></form></section></div>}</>;
+}
+
 function VehicleFleetView({ vehicles, setVehicles, onNotify }: { vehicles: Vehicle[]; setVehicles: Dispatch<React.SetStateAction<Vehicle[]>>; onNotify: (message: string) => void }) {
     const [open, setOpen] = useState(false);
-    const [form, setForm] = useState({ registrationNumber: "", vehicleType: "Tanker", capacity: "", driverName: "", driverPhone: "", imageUrl: "" });
+    const [form, setForm] = useState({ registrationNumber: "", vehicleType: "Tanker", capacity: "", driverName: "Assigned driver", driverPhone: "", imageUrl: "" });
+    useEffect(() => {
+        if (!open) return;
+        const registrationInput = document.querySelector<HTMLInputElement>('.modal[aria-labelledby="vehicle-dialog-title"] input');
+        if (registrationInput) {
+            registrationInput.placeholder = 'TN12 AB 9847';
+            registrationInput.title = 'Format: State code (2 letters) - RTO number (2 digits) - 2 letters - vehicle number (4 digits).';
+            registrationInput.pattern = '^[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}$';
+            const uppercase = () => {
+                const start = registrationInput.selectionStart;
+                const value = registrationInput.value.toUpperCase();
+                if (registrationInput.value !== value) registrationInput.value = value;
+                if (start !== null) registrationInput.setSelectionRange(start, start);
+            };
+            registrationInput.addEventListener('input', uppercase);
+            return () => registrationInput.removeEventListener('input', uppercase);
+        }
+    }, [open]);
+    useEffect(() => {
+        if (!open) return;
+        const formElement = document.querySelector<HTMLFormElement>('.modal[aria-labelledby="vehicle-dialog-title"] form');
+        if (!formElement) return;
+        const validate = (event: Event) => {
+            const inputs = formElement.querySelectorAll<HTMLInputElement>('input');
+            const registration = inputs[0]?.value.trim().toUpperCase() || '';
+            const vehicleType = inputs[1]?.value.trim() || '';
+            const capacity = inputs[2]?.value.trim() || '';
+            if (!/^[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}$/.test(registration)) { event.preventDefault(); onNotify('Use registration format: TN12 AB 9847.'); return; }
+            if (!vehicleType) { event.preventDefault(); onNotify('Enter the vehicle type.'); return; }
+            if (capacity && !/^\d+(?:\.\d+)?\s?KL$/i.test(capacity)) { event.preventDefault(); onNotify('Capacity must look like 6 KL or 12 KL.'); }
+        };
+        formElement.addEventListener('submit', validate);
+        return () => formElement.removeEventListener('submit', validate);
+    }, [open, onNotify]);
     const addVehicle = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        try { const vehicle = await createVendorVehicle(form); setVehicles(items => [vehicle, ...items]); setForm({ registrationNumber: "", vehicleType: "Tanker", capacity: "", driverName: "", driverPhone: "", imageUrl: "" }); setOpen(false); onNotify("Vehicle and driver added to your fleet."); } catch (error) { onNotify(error instanceof Error ? error.message : "Unable to add vehicle."); }
+        try { const vehicle = await createVendorVehicle({ ...form, registrationNumber: form.registrationNumber.trim().toUpperCase(), driverName: form.driverName.trim() || "Assigned driver" }); setVehicles(items => [vehicle, ...items]); setForm({ registrationNumber: "", vehicleType: "Tanker", capacity: "", driverName: "Assigned driver", driverPhone: "", imageUrl: "" }); setOpen(false); onNotify("Vehicle and driver added to your fleet."); } catch (error) { onNotify(error instanceof Error ? error.message : "Unable to add vehicle."); }
     };
     return <><PageHeader eyebrow="Vendor workspace · Fleet" title="Manage your vehicles." copy="Add, activate, deactivate, or remove the vehicles available for delivery assignments." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)}>Add vehicle</Button>} /><div className="order-list">{vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}>{vehicle.imageUrl ? <img className="vehicle-thumb" src={vehicle.imageUrl} alt="" /> : <div className="order-service-icon"><Package size={19} /></div>}<div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? "Active" : "Inactive"}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || "Capacity not set"}</span></div><Button variant={vehicle.active ? "quiet" : "primary"} onClick={() => void setVendorVehicleActive(vehicle.id, !vehicle.active).then(() => setVehicles(items => items.map(item => item.id === vehicle.id ? { ...item, active: !vehicle.active } : item))).catch(error => onNotify(error instanceof Error ? error.message : "Unable to update vehicle."))}>{vehicle.active ? "Set inactive" : "Set active"}</Button><Button variant="quiet" onClick={() => void deleteVendorVehicle(vehicle.id).then(() => setVehicles(items => items.filter(item => item.id !== vehicle.id))).catch(error => onNotify(error instanceof Error ? error.message : "Unable to delete vehicle."))}>Delete</Button></article>) : <div className="empty-state"><Package size={28} /><h3>No vehicles yet</h3><p>Add a vehicle before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close vehicle form">×</button><span className="eyebrow">Fleet management</span><h2 id="vehicle-dialog-title">Add vehicle</h2><form className="auth-form" onSubmit={addVehicle}><label>Registration number<input value={form.registrationNumber} onChange={event => setForm({ ...form, registrationNumber: event.target.value })} required /></label><label>Vehicle type<input value={form.vehicleType} onChange={event => setForm({ ...form, vehicleType: event.target.value })} required /></label><label>Capacity<input value={form.capacity} onChange={event => setForm({ ...form, capacity: event.target.value })} /></label><label>Vehicle image <small>(optional)</small><input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2_000_000) { onNotify("Vehicle image must be smaller than 2 MB."); return; } const reader = new FileReader(); reader.onload = () => setForm(current => ({ ...current, imageUrl: String(reader.result || "") })); reader.readAsDataURL(file); }} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add vehicle</Button></div></form></section></div>}</>;
 }
