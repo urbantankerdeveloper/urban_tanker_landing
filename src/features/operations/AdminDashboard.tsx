@@ -4,7 +4,7 @@ import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminDrivers, loadAdminOrderHistory, loadAdminVehicles, loadAdminVendorDrivers, loadAdminVendorVehicles, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
+import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminDrivers, loadAdminOrderHistory, loadAdminVehicles, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
 import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
@@ -60,10 +60,13 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     setRefreshing(true);
     setInitialLoading(true);
     try {
-      const [result, content] = await Promise.all([loadAdminDashboard(), loadContent(contentClientId)]);
+      const result = await loadAdminDashboard();
       setDashboard(result);
       useAppStore.setState(state => ({ data: { ...state.data, orders: result.orders, vendors: result.vendors } }));
-      hydrateContent(content);
+      if (showMessage) {
+        const content = await loadContent(contentClientId);
+        hydrateContent(content);
+      }
       if (showMessage) notify('Dashboard and content refreshed.');
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Unable to refresh dashboard data.');
@@ -122,11 +125,6 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const retryNotification = async (orderId: string) => {
     setNotifyingOrderId(orderId);
     try { await notifyVendorsOfOrder(orderId); notify('Order notification sent to connected vendors.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to notify vendors.'); } finally { setNotifyingOrderId(null); }
-  };
-  const openOrderHistory = async (orderId: string) => {
-    setHistoryOrderId(orderId);
-    setHistoryLoading(true);
-    try { setOrderHistory(await loadAdminOrderHistory(orderId)); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to load order history.'); setHistoryOrderId(null); } finally { setHistoryLoading(false); }
   };
   const assignOrder = async (orderId: string, vendorUid: string) => {
     if (!vendorUid) return;
@@ -312,7 +310,6 @@ function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'd
     } catch (error) { onNotify(error instanceof Error ? error.message : `Unable to create ${mode === 'fleet' ? 'vehicle' : 'driver'}.`); }
     finally { setBusy(false); }
   };
-  const selectedVendor = vendors.find(vendor => vendor.uid === vendorUid);
   return <><PageHeader eyebrow={`Admin workspace · ${mode === 'fleet' ? 'Fleet' : 'Drivers'}`} title={mode === 'fleet' ? 'Manage vendor vehicles.' : 'Manage vendor drivers.'} copy="Review the full fleet and driver roster across every vendor." action={<Button variant="primary" icon={mode === 'fleet' ? Truck : Users} onClick={() => setOpen(true)}>{mode === 'fleet' ? 'Add vehicle' : 'Add driver'}</Button>} /><div className="order-list">{mode === 'fleet' ? vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Truck size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>{vehicle.vendorName}</small></div></article>) : <div className="empty-state"><Truck size={28} /><h3>No vehicles yet</h3><p>No vendor vehicles are registered in this tenant.</p></div> : drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>{driver.vendorName}</small></div></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>No vendor drivers are registered in this tenant.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-fleet-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close form">×</button><span className="eyebrow">{mode === 'fleet' ? 'Fleet management' : 'Driver management'}</span><h2 id="admin-fleet-dialog-title">Add {mode === 'fleet' ? 'vehicle' : 'driver'}</h2><p className="modal-copy">Select the vendor owner before creating this record.</p><form className="auth-form" onSubmit={submit} noValidate><label>Owning vendor<select value={vendorUid} onChange={event => setVendorUid(event.target.value)} required><option value="">Select a vendor</option>{vendors.map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name} · {vendor.email}</option>)}</select></label>{mode === 'fleet' ? <><label>Registration number<input value={vehicleForm.registrationNumber} onChange={event => setVehicleForm({ ...vehicleForm, registrationNumber: event.target.value.toUpperCase() })} required /></label><label>Vehicle type<select value={vehicleForm.vehicleType} onChange={event => setVehicleForm({ ...vehicleForm, vehicleType: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={vehicleForm.capacity} onChange={event => setVehicleForm({ ...vehicleForm, capacity: event.target.value })} required /></label></> : <><label>Driver name<input value={driverForm.name} onChange={event => setDriverForm({ ...driverForm, name: event.target.value })} required /></label><label>Phone number<input value={driverForm.phone} onChange={event => setDriverForm({ ...driverForm, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" required /></label><label>Driver address<textarea value={driverForm.address} onChange={event => setDriverForm({ ...driverForm, address: event.target.value })} minLength={5} required /></label></>}<div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={busy || !vendorUid}>{busy ? 'Creating...' : `Create ${mode === 'fleet' ? 'vehicle' : 'driver'}`}</Button></div></form></section></div>}</>;
 }
 

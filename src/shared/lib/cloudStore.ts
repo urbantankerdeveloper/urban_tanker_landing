@@ -26,15 +26,32 @@ export interface UserProfile extends Profile {
 }
 
 export const contentClientId = import.meta.env.VITE_CONTENT_CLIENT_ID || 'urban-tanker';
+const contentRequests = new Map<string, Promise<CloudState>>();
+const contentValues = new Map<string, CloudState>();
 
 type Unsubscribe = () => void;
 
 export async function subscribeToContent(clientId: string, onContent: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
-  const apiUrl = API_BASE_URL;
   try {
-    const response = await fetch(`${apiUrl}/api/content/${encodeURIComponent(clientId)}`);
-    if (!response.ok) throw new Error('Content configuration request failed.');
-    const content = await response.json() as CloudState;
+    const cachedContent = contentValues.get(clientId);
+    const request = cachedContent
+      ? Promise.resolve(cachedContent)
+      : contentRequests.get(clientId) || (() => {
+        const promise = fetch(`${API_BASE_URL}/api/content/${encodeURIComponent(clientId)}`)
+          .then(async response => {
+            if (!response.ok) throw new Error('Content configuration request failed.');
+            const content = await response.json() as CloudState;
+            contentValues.set(clientId, content);
+            return content;
+          })
+          .catch(error => {
+            contentRequests.delete(clientId);
+            throw error;
+          });
+        contentRequests.set(clientId, promise);
+        return promise;
+      })();
+    const content = await request;
     onContent(content);
     await saveEncryptedContent(clientId, content);
   } catch (error) {
