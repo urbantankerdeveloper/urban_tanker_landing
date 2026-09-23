@@ -535,6 +535,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
     const order = req.body && typeof req.body === 'object' ? { ...req.body } : {};
     if (!order.id || !order.service || !order.status) return res.status(400).json({ message: 'Order details are incomplete.' });
+    delete order.statusHistory;
     const deliveryOtp = typeof order.deliveryOtp === 'string' ? order.deliveryOtp : '';
     delete order.deliveryOtp;
     if (deliveryOtp) order.deliveryOtpHash = createHash('sha256').update(deliveryOtp).digest('hex');
