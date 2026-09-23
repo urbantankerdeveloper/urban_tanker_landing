@@ -4,7 +4,7 @@ import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminOrderHistory, loadAdminVendorDrivers, loadAdminVendorVehicles, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
+import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminDrivers, loadAdminOrderHistory, loadAdminVehicles, loadAdminVendorDrivers, loadAdminVendorVehicles, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
 import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
@@ -17,6 +17,10 @@ const buildCsvReport = (headers: string[], rows: Array<Array<string | number | u
   [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
 
 type DeliveryNotification = { id: string; orderId: string; vendorName: string };
+
+function AdminViewSkeleton({ title = 'Loading dashboard data...' }: { title?: string }) {
+  return <div className="admin-skeleton-page" aria-busy="true" aria-live="polite" aria-label={title}><div className="skeleton-heading admin-skeleton-heading" /><div className="skeleton-copy admin-skeleton-copy" /><div className="admin-skeleton-list">{Array.from({ length: 4 }).map((_, index) => <div className="admin-skeleton-card" key={index}><div className="admin-skeleton-icon" /><div className="admin-skeleton-body"><div className="admin-skeleton-line admin-skeleton-line-lg" /><div className="admin-skeleton-line admin-skeleton-line-md" /><div className="admin-skeleton-line admin-skeleton-line-sm" /></div></div>)}</div></div>;
+}
 
 export function AdminDeliveryNotifications() {
   const [notifications, setNotifications] = useState<DeliveryNotification[]>([]);
@@ -41,6 +45,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const [bookingOpen, setBookingOpen] = useState(false);
   const [booking, setBooking] = useState({ service: 'Water tanker', capacity: '6 KL', customer: '', address: '', amount: '0' });
   const [dashboard, setDashboard] = useState<AdminDashboardData | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [ordersPage, setOrdersPage] = useState(1);
   const [notifyingOrderId, setNotifyingOrderId] = useState<string | null>(null);
   const [historyOrderId, setHistoryOrderId] = useState<string | null>(null);
@@ -49,6 +54,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const [refreshing, setRefreshing] = useState(false);
   const refreshDashboard = async (showMessage = false) => {
     setRefreshing(true);
+    setInitialLoading(true);
     try {
       const [result, content] = await Promise.all([loadAdminDashboard(), loadContent(contentClientId)]);
       setDashboard(result);
@@ -59,6 +65,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
       notify(error instanceof Error ? error.message : 'Unable to refresh dashboard data.');
     } finally {
       setRefreshing(false);
+      setInitialLoading(false);
     }
   };
   useEffect(() => {
@@ -121,6 +128,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     if (!vendorUid) return;
     try { await assignAdminOrderToVendor(orderId, vendorUid); await refreshDashboard(); notify('Vendor assigned to the order.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to assign the vendor.'); }
   };
+  if (initialLoading && !dashboard) return <AdminViewSkeleton title="Loading admin dashboard" />;
   if (view === 'orders') return <AdminOrdersView orders={filteredOrders} vendors={dashboard?.vendors || data.vendors} query={adminQuery} setQuery={setAdminQuery} notifyingOrderId={notifyingOrderId} onRetryNotification={retryNotification} onAssign={assignOrder} />;
   const addAccountToDashboard = (account: Awaited<ReturnType<typeof createAdminAccount>>) => {
     if (account.role === 'vendor') {
@@ -176,7 +184,7 @@ function AdminCouponsView() {
   };
   return <>
     <PageHeader eyebrow="Admin workspace · Coupons" title="Coupon controls." copy="Review the offers currently available to customers." action={<Button variant="primary" icon={Plus} onClick={() => setOpen(true)}>Add coupon</Button>} />
-    <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Customer offers</span><h2>{coupons.length} coupons</h2></div></div><div className="table-scroll"><table><thead><tr><th>Code</th><th>Offer</th><th>Service</th><th>Discount</th><th>Status</th></tr></thead><tbody>{visibleCoupons.map(coupon => <tr key={coupon.code}><td><b className="mono">{coupon.code}</b></td><td>{coupon.label}<small>{coupon.firstBooking ? 'First booking only' : 'All eligible bookings'}</small></td><td>{coupon.service || 'All services'}</td><td><b>{coupon.discount}{coupon.discount < 100 ? '%' : ' off'}</b></td><td><button className="coupon-status-control" type="button" onClick={() => void toggleCoupon(coupon)} disabled={busyCode === coupon.code} aria-label={`${coupon.active === false ? 'Enable' : 'Disable'} coupon ${coupon.code}`}><Status>{busyCode === coupon.code ? 'Updating' : coupon.active === false ? 'Inactive · Enable' : 'Active · Disable'}</Status></button></td></tr>)}</tbody></table>{!coupons.length && <div className="empty-state"><h3>No coupons configured</h3><p>Create a coupon to make an offer available to customers.</p></div>}</div><Pagination page={page} pageSize={10} total={coupons.length} onPageChange={setPage} /></article>
+    <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Customer offers</span><h2>{coupons.length} coupons</h2></div></div><div className="table-scroll"><table><thead><tr><th>Code</th><th>Offer</th><th>Service</th><th>Discount</th><th>Status</th></tr></thead><tbody>{visibleCoupons.map(coupon => <tr key={coupon.code}><td><b className="mono">{coupon.code}</b></td><td>{coupon.label}<small>{coupon.firstBooking ? 'First booking only' : 'All eligible bookings'}</small></td><td>{coupon.service || 'All services'}</td><td><b>{coupon.discount}{coupon.discount < 100 ? '%' : ' off'}</b></td><td><button className="coupon-status-control" type="button" onClick={() => void toggleCoupon(coupon)} disabled={busyCode === coupon.code} aria-label={`${coupon.active === false ? 'Enable' : 'Disable'} coupon ${coupon.code}`}><Status>{busyCode === coupon.code ? 'Updating...' : coupon.active === false ? 'Inactive' : 'Active'}</Status></button></td></tr>)}</tbody></table>{!coupons.length && <div className="empty-state"><h3>No coupons configured</h3><p>Create a coupon to make an offer available to customers.</p></div>}</div><Pagination page={page} pageSize={10} total={coupons.length} onPageChange={setPage} /></article>
     {open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="coupon-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close coupon form">×</button><span className="eyebrow">Customer offer</span><h2 id="coupon-dialog-title">Add a new coupon.</h2><form className="auth-form" onSubmit={submit}><label>Coupon code<input value={form.code} onChange={event => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="WATER200" pattern="[A-Z0-9_-]{3,30}" required /></label><label>Offer label<input value={form.label} onChange={event => setForm({ ...form, label: event.target.value })} placeholder="₹200 off water bookings" required /></label><div className="field-row"><label>Discount<input type="number" min="1" step="1" value={form.discount} onChange={event => setForm({ ...form, discount: event.target.value })} required /></label><label>Service<select value={form.service} onChange={event => setForm({ ...form, service: event.target.value })}><option value="">All services</option><option>Water tanker</option><option>Sewage pickup</option></select></label></div><label className="remember-option"><input type="checkbox" checked={form.firstBooking} onChange={event => setForm({ ...form, firstBooking: event.target.checked })} /> First booking only</label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Create coupon</Button></div></form></section></div>}
   </>;
 }
@@ -203,6 +211,8 @@ function AdminVendorsView({ vendors, onCreated, onNotify, onUpdated }: { vendors
   const [page, setPage] = useState(1);
   const filteredVendors = vendors.filter(vendor => filter === 'all' || (filter === 'active' ? vendor.status === 'active' || vendor.available === true : vendor.status !== 'active' && vendor.available !== true));
   const visibleVendors = filteredVendors.slice((page - 1) * 10, page * 10);
+  const activeVendorCount = vendors.filter(vendor => vendor.status === 'active' || vendor.available === true).length;
+  const inactiveVendorCount = vendors.length - activeVendorCount;
   const toggleStatus = async (vendor: AppData['vendors'][number]) => {
     if (!vendor.uid || busyUid) return;
     const active = !(vendor.status === 'active' || vendor.available === true);
@@ -224,7 +234,7 @@ function AdminVendorsView({ vendors, onCreated, onNotify, onUpdated }: { vendors
       <StatCard icon={ShieldCheck} label="Inactive" value={vendors.filter(vendor => vendor.status !== 'active' && vendor.available !== true).length} detail="Not accepting bookings" />
     </section>
     <article className="data-surface table-surface">
-      <div className="table-head"><div><span className="eyebrow">Vendor accounts</span><h2>{filteredVendors.length} visible vendors</h2></div><div className="segmented" role="group" aria-label="Vendor status filter">{(['all', 'active', 'inactive'] as const).map(option => <button className={filter === option ? 'active' : ''} type="button" key={option} onClick={() => setFilter(option)}>{option[0].toUpperCase() + option.slice(1)}</button>)}</div></div>
+      <div className="table-head"><div><span className="eyebrow">Vendor accounts</span><h2>{filteredVendors.length} visible vendors</h2></div><div className="status-filter-tools"><div className="status-filter-stats" aria-label={`${activeVendorCount} active vendors and ${inactiveVendorCount} inactive vendors`}><span><i className="status-stat-dot active" />{activeVendorCount} active</span><span><i className="status-stat-dot inactive" />{inactiveVendorCount} inactive</span></div><div className="segmented" role="group" aria-label="Vendor status filter">{(['all', 'active', 'inactive'] as const).map(option => <button className={filter === option ? 'active' : ''} type="button" key={option} onClick={() => setFilter(option)}>{option[0].toUpperCase() + option.slice(1)}</button>)}</div></div></div>
       <div className="table-scroll"><table><caption className="sr-only">MongoDB vendor directory</caption><thead><tr><th scope="col">Vendor</th><th scope="col">Contact</th><th scope="col">Availability</th><th scope="col">Service details</th><th scope="col">Location</th><th scope="col">Updated</th></tr></thead><tbody>{visibleVendors.map(vendor => { const active = vendor.status === 'active' || vendor.available === true; return <tr key={vendor.uid || vendor.email || vendor.name}><td><b>{vendor.name || 'Unnamed vendor'}</b><small className="mono">{vendor.uid || 'No UID'}</small></td><td>{vendor.email || 'No email'}<small>{vendor.phone || 'No phone'}</small></td><td><Status>{active ? 'Active' : 'Inactive'}</Status><small>{vendor.available ? 'Accepting bookings' : 'Unavailable'}</small></td><td>{vendor.vehicle || 'No vehicle'}<small>{vendor.capacity || 'Capacity not set'} · Rating {vendor.rating || '—'}</small></td><td>{vendor.zone || 'Not set'}<small>{typeof vendor.latitude === 'number' && typeof vendor.longitude === 'number' ? `${vendor.latitude.toFixed(4)}, ${vendor.longitude.toFixed(4)}` : 'Location not shared'}</small></td><td>{vendor.updated_at ? new Date(vendor.updated_at).toLocaleString('en-IN') : 'Not available'}</td></tr>; })}</tbody></table>{!filteredVendors.length && <div className="empty-state"><Users size={28} /><h3>No vendors found</h3><p>No vendor records match this status.</p></div>}</div><Pagination page={page} pageSize={10} total={filteredVendors.length} onPageChange={setPage} />
     </article>
     {accountOpen && <AdminAccountModal role="vendor" onClose={() => setAccountOpen(false)} onCreated={account => { onCreated(account); setAccountOpen(false); }} />}
@@ -235,28 +245,71 @@ function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'd
   const [vendorUid, setVendorUid] = useState('');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [vehicles, setVehicles] = useState<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean }>>([]);
-  const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [vehicles, setVehicles] = useState<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean; vendorName: string; vendorUid: string }>>([]);
+  const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean; vendorName: string; vendorUid: string }>>([]);
   const [vehicleForm, setVehicleForm] = useState({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
   const [driverForm, setDriverForm] = useState({ name: '', phone: '', address: '', addressProof: '' });
+
+  const refreshAll = async () => {
+    setLoading(true);
+    try {
+      if (mode === 'fleet') {
+        const records = await loadAdminVehicles();
+        setVehicles(records.map(item => ({
+          id: item.id,
+          registrationNumber: item.registrationNumber,
+          vehicleType: item.vehicleType,
+          capacity: item.capacity,
+          active: item.active,
+          vendorUid: item.vendorUid,
+          vendorName: item.vendorName,
+        })));
+        return;
+      }
+
+      const records = await loadAdminDrivers();
+      setDrivers(records.map(item => ({
+        id: item.id,
+        name: item.name,
+        phone: item.phone,
+        active: item.active,
+        vendorUid: item.vendorUid,
+        vendorName: item.vendorName,
+      })));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (!vendorUid) { setVehicles([]); setDrivers([]); return; }
-    const load = mode === 'fleet' ? loadAdminVendorVehicles(vendorUid).then(items => setVehicles(items.map(item => ({ id: item.id, registrationNumber: item.registrationNumber, vehicleType: item.vehicleType, capacity: item.capacity, active: item.active })))) : loadAdminVendorDrivers(vendorUid).then(setDrivers);
-    void load.catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load vendor records.'));
-  }, [mode, onNotify, vendorUid]);
+    void refreshAll().catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load vendor records.'));
+  }, [mode, onNotify]);
+
+  if (loading) return <AdminViewSkeleton title={mode === 'fleet' ? 'Loading fleet records' : 'Loading driver records'} />;
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!vendorUid) { onNotify('Select the vendor who owns this record.'); return; }
     setBusy(true);
     try {
-      if (mode === 'fleet') { await createAdminVehicle(vendorUid, vehicleForm); setVehicles(await loadAdminVendorVehicles(vendorUid)); setVehicleForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' }); onNotify('Vehicle created for the selected vendor.'); }
-      else { await createAdminDriver(vendorUid, driverForm); setDrivers(await loadAdminVendorDrivers(vendorUid)); setDriverForm({ name: '', phone: '', address: '', addressProof: '' }); onNotify('Driver created for the selected vendor.'); }
+      if (mode === 'fleet') {
+        await createAdminVehicle(vendorUid, vehicleForm);
+        await refreshAll();
+        setVehicleForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
+        onNotify('Vehicle created for the selected vendor.');
+      } else {
+        await createAdminDriver(vendorUid, driverForm);
+        await refreshAll();
+        setDriverForm({ name: '', phone: '', address: '', addressProof: '' });
+        onNotify('Driver created for the selected vendor.');
+      }
       setOpen(false);
     } catch (error) { onNotify(error instanceof Error ? error.message : `Unable to create ${mode === 'fleet' ? 'vehicle' : 'driver'}.`); }
     finally { setBusy(false); }
   };
   const selectedVendor = vendors.find(vendor => vendor.uid === vendorUid);
-  return <><PageHeader eyebrow={`Admin workspace · ${mode === 'fleet' ? 'Fleet' : 'Drivers'}`} title={mode === 'fleet' ? 'Manage vendor vehicles.' : 'Manage vendor drivers.'} copy="Review and register records owned by each vendor." action={<Button variant="primary" icon={mode === 'fleet' ? Truck : Users} onClick={() => setOpen(true)}>{mode === 'fleet' ? 'Add vehicle' : 'Add driver'}</Button>} /><div className="order-list">{mode === 'fleet' ? vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Truck size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>Vendor-owned fleet vehicle</small></div></article>) : <div className="empty-state"><Truck size={28} /><h3>{vendorUid ? 'No vehicles yet' : 'Select a vendor in Add vehicle'}</h3><p>{vendorUid ? 'Add the first vehicle for this vendor.' : 'Choose the owning vendor when creating a vehicle.'}</p></div> : drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>Vendor-owned driver record</small></div></article>) : <div className="empty-state"><Users size={28} /><h3>{vendorUid ? 'No drivers yet' : 'Select a vendor in Add driver'}</h3><p>{vendorUid ? 'Add the first driver for this vendor.' : 'Choose the owning vendor when creating a driver.'}</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-fleet-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close form">×</button><span className="eyebrow">{mode === 'fleet' ? 'Fleet management' : 'Driver management'}</span><h2 id="admin-fleet-dialog-title">Add {mode === 'fleet' ? 'vehicle' : 'driver'}</h2><p className="modal-copy">Select the vendor owner before creating this record.</p><form className="auth-form" onSubmit={submit} noValidate><label>Owning vendor<select value={vendorUid} onChange={event => setVendorUid(event.target.value)} required><option value="">Select a vendor</option>{vendors.map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name} · {vendor.email}</option>)}</select></label>{mode === 'fleet' ? <><label>Registration number<input value={vehicleForm.registrationNumber} onChange={event => setVehicleForm({ ...vehicleForm, registrationNumber: event.target.value.toUpperCase() })} required /></label><label>Vehicle type<select value={vehicleForm.vehicleType} onChange={event => setVehicleForm({ ...vehicleForm, vehicleType: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={vehicleForm.capacity} onChange={event => setVehicleForm({ ...vehicleForm, capacity: event.target.value })} required /></label></> : <><label>Driver name<input value={driverForm.name} onChange={event => setDriverForm({ ...driverForm, name: event.target.value })} required /></label><label>Phone number<input value={driverForm.phone} onChange={event => setDriverForm({ ...driverForm, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" required /></label><label>Driver address<textarea value={driverForm.address} onChange={event => setDriverForm({ ...driverForm, address: event.target.value })} minLength={5} required /></label></>}<div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={busy || !vendorUid}>{busy ? 'Creating...' : `Create ${mode === 'fleet' ? 'vehicle' : 'driver'}`}</Button></div></form></section></div>}</>;
+  return <><PageHeader eyebrow={`Admin workspace · ${mode === 'fleet' ? 'Fleet' : 'Drivers'}`} title={mode === 'fleet' ? 'Manage vendor vehicles.' : 'Manage vendor drivers.'} copy="Review the full fleet and driver roster across every vendor." action={<Button variant="primary" icon={mode === 'fleet' ? Truck : Users} onClick={() => setOpen(true)}>{mode === 'fleet' ? 'Add vehicle' : 'Add driver'}</Button>} /><div className="order-list">{mode === 'fleet' ? vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Truck size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>{vehicle.vendorName}</small></div></article>) : <div className="empty-state"><Truck size={28} /><h3>No vehicles yet</h3><p>No vendor vehicles are registered in this tenant.</p></div> : drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>{driver.vendorName}</small></div></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>No vendor drivers are registered in this tenant.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-fleet-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close form">×</button><span className="eyebrow">{mode === 'fleet' ? 'Fleet management' : 'Driver management'}</span><h2 id="admin-fleet-dialog-title">Add {mode === 'fleet' ? 'vehicle' : 'driver'}</h2><p className="modal-copy">Select the vendor owner before creating this record.</p><form className="auth-form" onSubmit={submit} noValidate><label>Owning vendor<select value={vendorUid} onChange={event => setVendorUid(event.target.value)} required><option value="">Select a vendor</option>{vendors.map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name} · {vendor.email}</option>)}</select></label>{mode === 'fleet' ? <><label>Registration number<input value={vehicleForm.registrationNumber} onChange={event => setVehicleForm({ ...vehicleForm, registrationNumber: event.target.value.toUpperCase() })} required /></label><label>Vehicle type<select value={vehicleForm.vehicleType} onChange={event => setVehicleForm({ ...vehicleForm, vehicleType: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={vehicleForm.capacity} onChange={event => setVehicleForm({ ...vehicleForm, capacity: event.target.value })} required /></label></> : <><label>Driver name<input value={driverForm.name} onChange={event => setDriverForm({ ...driverForm, name: event.target.value })} required /></label><label>Phone number<input value={driverForm.phone} onChange={event => setDriverForm({ ...driverForm, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" required /></label><label>Driver address<textarea value={driverForm.address} onChange={event => setDriverForm({ ...driverForm, address: event.target.value })} minLength={5} required /></label></>}<div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={busy || !vendorUid}>{busy ? 'Creating...' : `Create ${mode === 'fleet' ? 'vehicle' : 'driver'}`}</Button></div></form></section></div>}</>;
 }
 
 function AdminFleetDriversForm({ mode, vendors, onNotify }: { mode: 'fleet' | 'drivers'; vendors: AppData['vendors']; onNotify: (message: string) => void }) {
