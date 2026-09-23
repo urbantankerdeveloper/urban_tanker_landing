@@ -31,7 +31,7 @@ const contentClientId = import.meta.env.VITE_CONTENT_CLIENT_ID || 'urban-tanker'
 const API_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:5000' : 'https://urban-tanker-backend.onrender.com');
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
-const RESET_FUNCTION_URL = import.meta.env.VITE_RESET_FUNCTION_URL || 'https://us-central1-urban-tanker-landing.cloudfunctions.net/resetDatabasePassword';
+const RESET_FUNCTION_URL = import.meta.env.VITE_RESET_FUNCTION_URL || `${API_URL}/api/auth/password-reset`;
 
 function createUserObject(data: AuthResponse['user'], token: string): LocalUser {
   return {

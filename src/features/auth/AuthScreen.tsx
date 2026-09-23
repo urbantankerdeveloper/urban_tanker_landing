@@ -226,12 +226,12 @@ export function AuthScreen() {
         <div className="auth-panel-inner">
           <span className="eyebrow">{content.eyebrow}</span>
           <h2 id="auth-title">
-            {registering ? content.registerTitle : content.title}
+            {resetMode ? "Reset your password." : registering ? content.registerTitle : content.title}
           </h2>
           <p className="modal-copy">
-            {registering ? content.registerDescription : content.description}
+            {resetMode ? "Use your account email to receive a secure password reset link." : registering ? content.registerDescription : content.description}
           </p>
-          <div
+          {!resetMode && <div
             className="role-switcher"
             role="tablist"
             aria-label={content.accountTypeLabel}
@@ -251,23 +251,23 @@ export function AuthScreen() {
                 {content.roles[item]}
               </button>
             ))}
-          </div>
-          <p className="selected-role" aria-live="polite">
+          </div>}
+          {!resetMode && <p className="selected-role" aria-live="polite">
             <span>
               {registering
                 ? content.selectedRegisterRole || "Registering as"
                 : content.selectedSignInRole || "Signing in as"}
             </span>
             <strong>{content.roles[role]}</strong>
-          </p>
-          <button className="google-auth-button" type="button" onClick={() => void google()} disabled={busy}>
+          </p>}
+          {!resetMode && <button className="google-auth-button" type="button" onClick={() => void google()} disabled={busy}>
             <span aria-hidden="true">G</span>
             {busy ? content.googleConnecting : `${content.signIn} with Google`}
-          </button>
-          <div className="auth-divider">
+          </button>}
+          {!resetMode && <div className="auth-divider">
             <span>{content.emailDivider}</span>
-          </div>
-          <form className="auth-form" onSubmit={submit} noValidate>
+          </div>}
+          {!resetMode && <form className="auth-form" onSubmit={submit} noValidate>
             {registering && (
               <label htmlFor="auth-name">
                 {role === "customer"
@@ -358,8 +358,8 @@ export function AuthScreen() {
                   ? `${content.register} ${content.roles[role]}`
                   : `${content.signIn} ${content.roles[role]}`}
             </Button>
-          </form>
-          <div className="auth-link-row">
+          </form>}
+          {!resetMode && <div className="auth-link-row">
             {!registering && !resetMode && (
               <button className="auth-mode-toggle" type="button" onClick={() => setResetMode(true)}>
                 Forgot password?
@@ -374,7 +374,7 @@ export function AuthScreen() {
                 {registering ? content.toggleSignIn : content.toggleRegister}
               </button>
             )}
-          </div>
+          </div>}
           {resetMode && (
             <form className="auth-form reset-form" onSubmit={handlePasswordReset}>
               <p className="modal-copy">{resetToken ? "Choose a new password." : "Enter your email and we will send a secure reset link."}</p>

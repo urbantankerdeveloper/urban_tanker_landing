@@ -35,7 +35,7 @@ const authStateCallbacks: ((user: LocalUser | null) => void)[] = [];
 const API_URL = API_BASE_URL;
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
-const RESET_FUNCTION_URL = import.meta.env.VITE_RESET_FUNCTION_URL || 'https://us-central1-urban-tanker-landing.cloudfunctions.net/resetDatabasePassword';
+const RESET_FUNCTION_URL = import.meta.env.VITE_RESET_FUNCTION_URL || `${API_URL}/api/auth/password-reset`;
 
 function createUserObject(data: AuthResponse['user'], token: string): LocalUser {
   return {
