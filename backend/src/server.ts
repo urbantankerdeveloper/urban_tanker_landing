@@ -51,12 +51,14 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', socket => {
+  console.log(`Socket connected: ${socket.data.user.role} ${socket.data.user.uid} (${socket.data.user.clientId})`);
   if (socket.data.user.role === 'vendor') {
     socket.join(`vendor:${socket.data.user.clientId}`);
     socket.join(`vendor:${socket.data.user.clientId}:${socket.data.user.uid}`);
   }
   if (socket.data.user.role === 'customer') socket.join(`customer:${socket.data.user.uid}`);
   if (socket.data.user.role === 'admin') socket.join(`admin:${socket.data.user.clientId}`);
+  socket.on('disconnect', reason => console.log(`Socket disconnected: ${socket.data.user.role} ${socket.data.user.uid} (${reason})`));
 });
 
 async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: Record<string, any>): Promise<void> {
@@ -129,6 +131,7 @@ async function dispatchOrderNotification(order: Record<string, any>, excludedVen
   }).map(vendor => vendor.uid);
   const payload = { ...removeDeliveryOtpFields(order), excludedVendorUids };
   for (const vendorUid of eligibleVendorUids) io.to(`vendor:${order.client_id}:${vendorUid}`).emit('order:created', payload);
+  if (!eligibleVendorUids.length) console.warn(`No eligible vendor sockets for order ${order.id} in client ${order.client_id}. Active vehicles with active drivers are required.`);
   return eligibleVendorUids;
 }
 
@@ -535,7 +538,7 @@ app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req,
     }
     const vendorResult = await vendorsCollection.updateOne(filter, { $set: { status, available: active, updated_at: new Date() } });
     if (!vendorResult.matchedCount) return res.status(404).json({ message: 'Vendor was not found.' });
-    await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, updated_at: new Date() } });
+    await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, ...(active ? { approval_status: 'approved' } : {}), updated_at: new Date() } });
     res.json({ uid: req.params.vendorUid, status, available: active });
   } catch (error) {
     console.error('Admin vendor status error:', error);

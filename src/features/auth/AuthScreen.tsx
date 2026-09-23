@@ -118,7 +118,7 @@ export function AuthScreen() {
           ),
         );
       } else {
-        await complete(await signInWithPassword(email.trim(), password, role));
+        await complete(await signInWithPassword(email.trim(), password));
       }
     } catch (cause) {
       const code =
@@ -153,7 +153,7 @@ export function AuthScreen() {
     setError("");
     setBusy(true);
     try {
-      await complete(await signInWithGoogle(role));
+      await complete(await signInWithGoogle(registering ? role : undefined));
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Unable to sign in with Google.";
       setError(message);
@@ -231,7 +231,7 @@ export function AuthScreen() {
           <p className="modal-copy">
             {resetMode ? "Use your account email to receive a secure password reset link." : registering ? content.registerDescription : content.description}
           </p>
-          {!resetMode && <div
+          {!resetMode && registering && <div
             className="role-switcher"
             role="tablist"
             aria-label={content.accountTypeLabel}
@@ -252,7 +252,7 @@ export function AuthScreen() {
               </button>
             ))}
           </div>}
-          {!resetMode && <p className="selected-role" aria-live="polite">
+          {!resetMode && registering && <p className="selected-role" aria-live="polite">
             <span>
               {registering
                 ? content.selectedRegisterRole || "Registering as"

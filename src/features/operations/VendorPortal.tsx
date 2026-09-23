@@ -135,6 +135,9 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         const token = getAuthToken();
         if (!token) return undefined;
         const socket: Socket = io(API_BASE_URL, { auth: { token }, transports: ["websocket", "polling"] });
+        socket.on("connect", () => console.info("Vendor Socket.IO connected", socket.id));
+        socket.on("connect_error", error => console.error("Vendor Socket.IO connection failed", error.message));
+        socket.on("disconnect", reason => console.info("Vendor Socket.IO disconnected", reason));
 
         const created = (order: Order & { excludedVendorUids?: string[] }) => {
             const currentUser = getCurrentUser();
@@ -168,10 +171,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         };
     }, []);
     if (initialLoading) return <WorkspaceSkeleton role="vendor" />;
-    const activeAssignedOrder = vendorOrders.find(item => ['Accepted', 'Vendor accepted', 'En route', 'Arrived'].includes(item.status));
     const toggleAvailability = async () => {
         if (availabilityBusy) return;
-        if (available && activeAssignedOrder) { onNotify(`You cannot go offline while order ${activeAssignedOrder.id} is active.`); return; }
         const next = !available;
         setAvailabilityBusy(true);
         try {
@@ -351,8 +352,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                 copy="Accept new bookings quickly, keep the customer updated, and complete delivery with their OTP."
                 action={
                     <div className="heading-actions">
-                        <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy || Boolean(available && activeAssignedOrder)}>
-                            {availabilityBusy ? "Updating..." : available && activeAssignedOrder ? "Active delivery in progress" : available ? "Active for bookings" : "Inactive for bookings"}
+                        <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy}>
+                        {availabilityBusy ? "Updating..." : available ? "Active for bookings" : "Inactive for bookings"}
                         </Button>
                         <Button variant="quiet" icon={Navigation} onClick={() => void shareLocation()} disabled={operationBusy}>Share location</Button>
                     </div>

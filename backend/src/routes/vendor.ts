@@ -114,12 +114,10 @@ export function registerVendorRoutes(app: Express, deps: any) {
   app.patch('/api/vendor/availability', deps.authenticateToken, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+      const account = await usersCollection.findOne({ uid: req.user.uid, client_id: req.user.clientId, role: 'vendor' }, { projection: { approval_status: 1, status: 1 } });
+      if (account?.approval_status !== 'approved' && account?.status !== 'active') return res.status(403).json({ message: 'Your vendor account is awaiting administrator approval.' });
       const status = req.body.status === 'active' || req.body.available === true ? 'active' : 'inactive';
       const available = status === 'active';
-      if (!available) {
-        const activeOrder = await ordersCollection.findOne({ client_id: req.user.clientId, assigned_vendor_uid: req.user.uid, status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] } }, { projection: { _id: 0, id: 1 } });
-        if (activeOrder) return res.status(409).json({ message: `You cannot go offline while order ${activeOrder.id} is active.` });
-      }
       await vendorsCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId }, { $set: { available, status, updated_at: new Date() }, $setOnInsert: { uid: req.user.uid, client_id: req.user.clientId, name: req.user.displayName || 'Vendor', email: req.user.email || '', phone: req.user.phoneNumber || null, driver: req.user.displayName || 'Vendor', zone: '', vehicle: '', capacity: '', rating: '' } }, { upsert: true });
       await usersCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId, role: 'vendor' }, { $set: { status, available, updated_at: new Date() } });
       res.json({ available, status });

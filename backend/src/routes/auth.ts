@@ -49,6 +49,23 @@ async function createSession(user, token) {
   });
 }
 
+async function notifyMainAdminOfApprovalRequest(user: Record<string, any>): Promise<void> {
+  const adminEmail = process.env.MAIN_ADMIN_EMAIL || process.env.ADMIN_EMAIL;
+  const emailKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.MAIL_FROM;
+  if (!adminEmail || !emailKey || !emailFrom) return;
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${emailKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: [adminEmail],
+      subject: `Urban Tanker ${user.role} approval request`,
+      html: `<p>A new ${user.role} account is waiting for approval.</p><p><strong>${user.display_name}</strong> · ${user.email}</p><p>Client: ${user.client_id}</p>`,
+    }),
+  });
+}
+
 router.post('/google', async (req, res) => {
   try {
     const { idToken, role } = req.body;
@@ -86,7 +103,7 @@ router.post('/google', async (req, res) => {
         updated_at: now,
         last_login: now,
         client_id: clientId,
-        ...(role === 'vendor' ? { status: 'inactive', available: false } : {}),
+        ...(role === 'vendor' || role === 'admin' ? { status: 'inactive', available: false, approval_status: 'pending' } : { status: 'active', approval_status: 'approved' }),
       };
       await usersCollection.insertOne(user);
       if (user.role === 'vendor') {
@@ -96,8 +113,12 @@ router.post('/google', async (req, res) => {
           { upsert: true },
         );
       }
+      if (user.role === 'vendor' || user.role === 'admin') {
+        await notifyMainAdminOfApprovalRequest(user).catch(error => console.error('Approval notification error:', error));
+        return res.status(202).json({ message: `Your ${user.role} account was created and is awaiting administrator approval.` });
+      }
     } else {
-      if (role && user.role !== role) return res.status(403).json({ message: `This account is registered as ${user.role}. Select the matching role.` });
+      if (['vendor', 'admin'].includes(user.role) && user.approval_status !== 'approved' && user.status !== 'active') return res.status(403).json({ message: `Your ${user.role} account is awaiting administrator approval.` });
       await usersCollection.updateOne({ _id: user._id, client_id: clientId }, { $set: { last_login: new Date(), updated_at: new Date() } });
     }
 
@@ -140,7 +161,8 @@ router.post(
 
       // Create user document
       const uid = randomUUID();
-      const userData = {
+        const approvalRequired = role === 'vendor' || role === 'admin';
+        const userData = {
         _id: uid,
         uid,
         email,
@@ -154,7 +176,7 @@ router.post(
         updated_at: new Date(),
         last_login: null,
         client_id: clientId,
-        ...(role === 'vendor' ? { status: 'inactive', available: false } : {}),
+        ...(approvalRequired ? { status: 'inactive', available: false, approval_status: 'pending' } : { status: 'active', approval_status: 'approved' }),
       };
 
       await usersCollection.insertOne(userData);
@@ -164,6 +186,10 @@ router.post(
           { $set: { uid, client_id: clientId, name: userData.display_name, email, phone: userData.phone_number, driver: userData.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, updated_at: new Date() } },
           { upsert: true },
         );
+      }
+      if (approvalRequired) {
+        await notifyMainAdminOfApprovalRequest(userData).catch(error => console.error('Approval notification error:', error));
+        return res.status(202).json({ message: `Your ${role} account was created and is awaiting administrator approval.` });
       }
       const user = userData;
 
@@ -201,7 +227,7 @@ router.post(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { email, password, role } = req.body;
+      const { email, password } = req.body;
       const clientId = typeof req.body.clientId === 'string' && req.body.clientId.trim() ? req.body.clientId.trim() : 'urban-tanker';
 
       // Find user by email
@@ -210,14 +236,14 @@ router.post(
         return res.status(401).json({ message: 'Invalid email or password' });
       }
 
-      if (role && user.role !== role) {
-        return res.status(403).json({ message: `This account is registered as ${user.role}. Select the matching role.` });
-      }
-
       // Verify password
       const validPassword = await comparePassword(password, user.password_hash);
       if (!validPassword) {
         return res.status(401).json({ message: 'Invalid email or password' });
+      }
+
+      if (['vendor', 'admin'].includes(user.role) && user.approval_status !== 'approved' && user.status !== 'active') {
+        return res.status(403).json({ message: `Your ${user.role} account is awaiting administrator approval.` });
       }
 
       // Update last login

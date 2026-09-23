@@ -79,15 +79,16 @@ async function makeAuthRequest(endpoint: string, body: Record<string, unknown>) 
   }
 }
 
-export async function signInWithGoogle(role: LocalUser['role'] = 'customer'): Promise<LocalUser> {
+export async function signInWithGoogle(role?: LocalUser['role']): Promise<LocalUser> {
   const result = await signInWithPopup(googleAuth, new GoogleAuthProvider());
   const googleToken = await result.user.getIdToken();
-  const payload = await makeAuthRequest('/google', { clientId: contentClientId, idToken: googleToken, role });
+  const payload = await makeAuthRequest('/google', { clientId: contentClientId, idToken: googleToken, ...(role ? { role } : {}) });
+  if (!payload.idToken) throw new Error(payload.message || 'Your account is awaiting administrator approval.');
   return persistUser(createUserObject(payload.user, payload.idToken));
 }
 
-export async function signInWithPassword(email: string, password: string, role: LocalUser['role']): Promise<LocalUser> {
-  return databaseCredentialAuth('login', email, password, undefined, role);
+export async function signInWithPassword(email: string, password: string): Promise<LocalUser> {
+  return databaseCredentialAuth('login', email, password);
 }
 
 export async function registerWithPassword(
@@ -100,8 +101,9 @@ export async function registerWithPassword(
   return databaseCredentialAuth('register', email, password, displayName, role, phoneNumber);
 }
 
-async function databaseCredentialAuth(action: 'login' | 'register', email: string, password: string, displayName?: string, role: LocalUser['role'] = 'customer', phoneNumber?: string): Promise<LocalUser> {
-  const payload = await makeAuthRequest(action === 'register' ? '/register' : '/login', { clientId: contentClientId, email, password, displayName, phoneNumber, role });
+async function databaseCredentialAuth(action: 'login' | 'register', email: string, password: string, displayName?: string, role?: LocalUser['role'], phoneNumber?: string): Promise<LocalUser> {
+  const payload = await makeAuthRequest(action === 'register' ? '/register' : '/login', { clientId: contentClientId, email, password, ...(action === 'register' ? { displayName, phoneNumber, role: role || 'customer' } : {}) });
+  if (!payload.idToken) throw new Error(payload.message || 'Your account is awaiting administrator approval.');
   return persistUser(createUserObject(payload.user, payload.idToken));
 }
 

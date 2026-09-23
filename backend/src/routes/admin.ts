@@ -211,7 +211,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
       }
       const vendorResult = await vendorsCollection.updateOne(filter, { $set: { status, available: active, updated_at: new Date() } });
       if (!vendorResult.matchedCount) return res.status(404).json({ message: 'Vendor was not found.' });
-      await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, updated_at: new Date() } });
+      await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, ...(active ? { approval_status: 'approved' } : {}), updated_at: new Date() } });
       res.json({ uid: req.params.vendorUid, status, available: active });
     } catch (error) {
       console.error('Admin vendor status error:', error);
