@@ -284,20 +284,51 @@ app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
     const registrationNumber = String(req.body.registrationNumber || '').trim().toUpperCase();
     const vehicleType = String(req.body.vehicleType || '').trim();
     const capacity = String(req.body.capacity || '').trim();
-    const driverName = String(req.body.driverName || '').trim();
-    const driverPhone = String(req.body.driverPhone || '').trim();
-    if (!registrationNumber || !vehicleType || !driverName) return res.status(400).json({ message: 'Registration number, vehicle type, and driver name are required.' });
+    if (!registrationNumber || !vehicleType) return res.status(400).json({ message: 'Registration number and vehicle type are required.' });
     const imageUrl = typeof req.body.imageUrl === 'string' && req.body.imageUrl.length <= 2_000_000 ? req.body.imageUrl : '';
     const now = new Date();
-    const driverId = randomUUID();
-    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, registration_expiry: req.body.registrationExpiry ? new Date(req.body.registrationExpiry) : undefined, insurance_expiry: req.body.insuranceExpiry ? new Date(req.body.insuranceExpiry) : undefined, permit_expiry: req.body.permitExpiry ? new Date(req.body.permitExpiry) : undefined, driver_id: driverId, driver_name: driverName, driver_phone: driverPhone, driver_active: false, active: false, updated_at: now };
-    await driversCollection.insertOne({ id: driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, name: driverName, phone: driverPhone, active: false, updated_at: now });
+    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, registration_expiry: req.body.registrationExpiry ? new Date(req.body.registrationExpiry) : undefined, insurance_expiry: req.body.insuranceExpiry ? new Date(req.body.insuranceExpiry) : undefined, permit_expiry: req.body.permitExpiry ? new Date(req.body.permitExpiry) : undefined, active: false, updated_at: now };
     await vehiclesCollection.insertOne(vehicle);
     res.status(201).json({ vehicle });
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 11000) return res.status(409).json({ message: 'That vehicle registration is already registered.' });
     res.status(500).json({ message: 'Unable to create vehicle.' });
   }
+});
+
+app.get('/api/vendor/drivers', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const drivers = await driversCollection.find({ client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray();
+  res.json({ drivers });
+});
+
+app.post('/api/vendor/drivers', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const name = String(req.body.name || '').trim();
+  const phone = String(req.body.phone || '').trim();
+  const address = String(req.body.address || '').trim();
+  const addressProof = typeof req.body.addressProof === 'string' && req.body.addressProof.length <= 3_000_000 ? req.body.addressProof : '';
+  if (!name || !address) return res.status(400).json({ message: 'Driver name and address are required.' });
+  const driver = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, name, phone, address, address_proof: addressProof, active: false, updated_at: new Date() };
+  await driversCollection.insertOne(driver);
+  res.status(201).json({ driver });
+});
+
+app.patch('/api/vendor/drivers/:driverId/status', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const active = req.body.active === true;
+  const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: { active, updated_at: new Date() } });
+  if (!result.matchedCount) return res.status(404).json({ message: 'Driver was not found.' });
+  res.json({ id: req.params.driverId, active });
+});
+
+app.delete('/api/vendor/drivers/:driverId', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+  const filter = { id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid };
+  const result = await driversCollection.deleteOne(filter);
+  if (!result.deletedCount) return res.status(404).json({ message: 'Driver was not found.' });
+  await vehiclesCollection.updateMany({ client_id: req.user.clientId, vendor_uid: req.user.uid, driver_id: req.params.driverId }, { $unset: { driver_id: '', driver_name: '', driver_phone: '', driver_active: '' }, $set: { updated_at: new Date() } });
+  res.status(204).send();
 });
 
 app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res) => {
@@ -307,6 +338,14 @@ app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res)
   if (typeof req.body.driverActive === 'boolean') update.driver_active = req.body.driverActive;
   const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1 } });
   if (!vehicle) return res.status(404).json({ message: 'Vehicle was not found.' });
+  if (typeof req.body.driverId === 'string') {
+    const driver = await driversCollection.findOne({ id: req.body.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { id: 1, name: 1, phone: 1, active: 1 } });
+    if (!driver) return res.status(404).json({ message: 'Driver was not found.' });
+    update.driver_id = driver.id;
+    update.driver_name = driver.name;
+    update.driver_phone = driver.phone;
+    update.driver_active = driver.active;
+  }
   const result = await vehiclesCollection.updateOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: update });
   if (!result.matchedCount) return res.status(404).json({ message: 'Vehicle was not found.' });
   if (typeof req.body.driverActive === 'boolean') await driversCollection.updateOne({ id: vehicle.driver_id, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: { active: req.body.driverActive, updated_at: new Date() } });

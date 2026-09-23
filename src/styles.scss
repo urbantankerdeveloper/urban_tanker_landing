@@ -940,6 +940,9 @@ label.input-icon input {
 	scrollbar-gutter: stable
 }
 
+.modal .heading-actions {
+	margin-top: 26px;
+}
 .checkout-step {
 	min-width: 0
 }
@@ -1170,6 +1173,19 @@ label.input-icon input {
 
 html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body { overscroll-behavior-y: none; }
+.field-error {
+	display: block;
+	margin-top: -2px;
+	color: var(--coral);
+	font-size: 10px;
+	font-weight: 600;
+}
+
+input[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+	border-color: var(--coral);
+	box-shadow: 0 0 0 3px rgb(217 109 93 / 12%);
+}
 .error-state-screen {
 	display: grid;
 	place-items: center;
