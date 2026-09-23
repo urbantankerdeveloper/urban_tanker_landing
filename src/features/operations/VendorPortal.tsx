@@ -13,11 +13,12 @@ import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui
 import { Pagination } from "../../shared/components/Pagination";
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
-import { createVendorMaintenance, createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorMaintenance, loadVendorPayouts, loadVendorVehicles, saveDriverAttendance, setVendorAvailability, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
+import { createVendorMaintenance, createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorExpiringDocuments, loadVendorMaintenance, loadVendorPayouts, loadVendorVehicles, saveDriverAttendance, setVendorAvailability, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
 import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "react";
 import { io, type Socket } from "socket.io-client";
 import { API_BASE_URL } from "../../shared/lib/apiConfig";
 import { getAuthToken, getCurrentUser } from "../../features/auth/auth";
+import { FleetExpiryPanel } from './FleetExpiryPanel';
 
 const stages: OrderStatus[] = [
     "Created",
@@ -263,8 +264,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     if (view !== "overview") {
         const activeOrder = vendorOrders.find(item => item.status !== "Delivered");
         if (view === "orders") return <VendorOrdersView orders={vendorOrders} />;
-        if (view === "track") return <VendorTrackingView order={activeOrder} />;
-        if (view === "fleet") return <VehicleFleetView vehicles={vehicles} setVehicles={setVehicles} onNotify={onNotify} />;
+        if (view === "track") return <VendorTrackingView order={activeOrder} orders={vendorOrders} />;
+        if (view === "fleet") return <><FleetExpiryPanel onNotify={onNotify} /><VehicleFleetView vehicles={vehicles} setVehicles={setVehicles} onNotify={onNotify} /></>;
         if (view === "maintenance") return <VendorMaintenanceView vehicles={vehicles} onNotify={onNotify} />;
         if (view === "attendance") return <VendorAttendanceView vehicles={vehicles} onNotify={onNotify} />;
         if (view === "payouts") return <VendorPayoutsView onNotify={onNotify} />;
@@ -491,12 +492,12 @@ function VendorOrdersView({ orders }: { orders: AppData["orders"] }) {
     </>;
 }
 
-function VendorTrackingView({ order }: { order?: Order }) {
+function VendorTrackingView({ order, orders }: { order?: Order; orders: AppData["orders"] }) {
     return <>
         <PageHeader eyebrow="Vendor workspace · Live tracking" title="Share the journey." copy="Your latest location is visible to the customer while the active job is in progress." />
         <section className="tracking-surface">
             {order ? <><div className="section-heading"><div><span className="eyebrow">Active job</span><h2>{order.service} · {order.id}</h2><p>{order.address}</p></div><Status>{order.status}</Status></div><div className="tracking-details"><div><span>Customer</span><b>{order.customer}</b></div><div><span>Last location</span><b>{typeof order.vendorLatitude === "number" ? `${order.vendorLatitude.toFixed(4)}, ${order.vendorLongitude?.toFixed(4)}` : "Not shared yet"}</b></div><div><span>ETA</span><b>{order.eta}</b></div></div></> : <div className="empty-state"><Navigation size={28} /><h3>No active delivery</h3><p>Accept an order to start sharing your location.</p></div>}
-        </section>
+        </section>{orders.length > 1 && <section className="data-surface route-plan"><div className="section-heading"><div><span className="eyebrow">Route plan</span><h2>Suggested delivery sequence</h2></div><Status>Optimized</Status></div><ol>{orders.filter(item => item.status !== "Delivered" && item.status !== "Rejected").map((item, index) => <li key={item.id}><span>{index + 1}</span><div><b>{item.service} · {item.id}</b><small>{item.address} · {item.eta || "ETA pending"}</small></div></li>)}</ol></section>}
     </>;
 }
 

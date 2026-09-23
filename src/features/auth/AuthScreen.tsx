@@ -51,6 +51,26 @@ export function AuthScreen() {
     }
     return normalized;
   };
+  const validateCredentials = () => {
+    const normalizedEmail = email.trim();
+    if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
+      setError('Enter a valid email address.');
+      return false;
+    }
+    if (registering && password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return false;
+    }
+    if (!registering && password.length === 0) {
+      setError('Enter your password.');
+      return false;
+    }
+    if (registering && name.trim().length < 2) {
+      setError('Enter your full name or organisation name.');
+      return false;
+    }
+    return true;
+  };
   const complete = async (user: {
     displayName: string | null;
     email: string | null;
@@ -75,6 +95,11 @@ export function AuthScreen() {
     if (submitLock.current || busy) return;
     submitLock.current = true;
     setError("");
+    if (!validateCredentials()) {
+      submitLock.current = false;
+      notify('Check the highlighted account details.');
+      return;
+    }
     if (registering && !validatePhone()) {
       submitLock.current = false;
       notify("Enter a valid 10-digit Indian mobile number.");
@@ -143,6 +168,16 @@ export function AuthScreen() {
     if (submitLock.current || busy) return;
     submitLock.current = true;
     setError("");
+    if (!/^\S+@\S+\.\S+$/.test(resetEmail.trim())) {
+      setError('Enter a valid email address.');
+      submitLock.current = false;
+      return;
+    }
+    if (resetToken && resetPassword.length < 8) {
+      setError('New password must be at least 8 characters.');
+      submitLock.current = false;
+      return;
+    }
     setBusy(true);
     try {
       const message = resetToken
@@ -301,7 +336,7 @@ export function AuthScreen() {
                     ? content.registerPasswordPlaceholder
                     : content.passwordPlaceholder
                 }
-                minLength={6}
+                minLength={8}
                 required
               />
             </label>

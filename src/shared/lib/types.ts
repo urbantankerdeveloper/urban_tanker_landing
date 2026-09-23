@@ -1,5 +1,5 @@
 export type Role = 'customer' | 'vendor' | 'admin';
-export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support' | 'fleet' | 'maintenance' | 'attendance' | 'payouts' | 'subscriptions' | 'customers' | 'vendors' | 'coupons';
+export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support' | 'fleet' | 'maintenance' | 'attendance' | 'payouts' | 'subscriptions' | 'invoices' | 'dispatch' | 'customers' | 'vendors' | 'coupons';
 export type OrderStatus = 'Created' | 'Pending acceptance' | 'Accepted' | 'En route' | 'Arrived' | 'Delivered' | 'Rejected' | 'Cancelled' | 'Vendor assigned' | 'Vendor accepted' | 'Vendor rejected';
 
 export interface Profile {
@@ -107,6 +107,9 @@ export interface Vehicle {
   driverPhone: string;
   driverActive: boolean;
   imageUrl?: string;
+  registrationExpiry?: string;
+  insuranceExpiry?: string;
+  permitExpiry?: string;
 }
 
 export interface AppData {

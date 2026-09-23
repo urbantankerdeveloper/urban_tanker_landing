@@ -3,7 +3,7 @@ import { AppShell } from '../shared/components/AppShell';
 import { AuthScreen } from '../features/auth/AuthScreen';
 import { CustomerHomeShell } from '../features/customer/CustomerHomeShell';
 import { LoadingSkeleton, Toast } from '../shared/components';
-import { contentClientId, getUserProfile, refreshCloudState, subscribeToCloudState, subscribeToContent, subscribeToOperations } from '../shared/lib/cloudStore';
+import { contentClientId, flushOfflineMutations, getUserProfile, refreshCloudState, subscribeToCloudState, subscribeToContent, subscribeToOperations } from '../shared/lib/cloudStore';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent } from '../shared/lib/secureCache';
 import { hydrateCloudState, hydrateContent, useAppStore } from './store';
 import { useAuth } from './providers/AuthContext';
@@ -19,6 +19,13 @@ const CheckoutModal = lazy(() => import('../features/checkout/CheckoutModal').th
 export function App() {
   const { data, isHydrated, active, toast, mobileNav, checkoutOpen, setActive, setMobileNav, setHydrated, notify, signOut, dismissToast } = useAppStore();
   const { user, loading: authLoading } = useAuth();
+
+  useEffect(() => {
+    const retryOfflineMutations = () => { void flushOfflineMutations(); };
+    window.addEventListener('online', retryOfflineMutations);
+    void flushOfflineMutations();
+    return () => window.removeEventListener('online', retryOfflineMutations);
+  }, []);
 
   useEffect(() => {
     if (active !== 'book') return;

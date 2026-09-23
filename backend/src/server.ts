@@ -251,7 +251,7 @@ app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
     const imageUrl = typeof req.body.imageUrl === 'string' && req.body.imageUrl.length <= 2_000_000 ? req.body.imageUrl : '';
     const now = new Date();
     const driverId = randomUUID();
-    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, driver_id: driverId, driver_name: driverName, driver_phone: driverPhone, driver_active: false, active: false, updated_at: now };
+    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, registration_expiry: req.body.registrationExpiry ? new Date(req.body.registrationExpiry) : undefined, insurance_expiry: req.body.insuranceExpiry ? new Date(req.body.insuranceExpiry) : undefined, permit_expiry: req.body.permitExpiry ? new Date(req.body.permitExpiry) : undefined, driver_id: driverId, driver_name: driverName, driver_phone: driverPhone, driver_active: false, active: false, updated_at: now };
     await driversCollection.insertOne({ id: driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, name: driverName, phone: driverPhone, active: false, updated_at: now });
     await vehiclesCollection.insertOne(vehicle);
     res.status(201).json({ vehicle });

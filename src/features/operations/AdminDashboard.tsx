@@ -11,6 +11,7 @@ import { useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '../../shared/lib/apiConfig';
 import { getAuthToken } from '../../features/auth/auth';
+import { DispatchBoard } from './DispatchBoard';
 
 const buildCsvReport = (headers: string[], rows: Array<Array<string | number | undefined>>) =>
   [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -139,6 +140,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   }} />;
   if (view === 'coupons') return <AdminCouponsView />;
   if (view === 'track') return <AdminTrackingView orders={data.orders} vendors={data.vendors} />;
+  if (view === 'dispatch') return <DispatchBoard orders={data.orders} vendors={data.vendors} onAssign={assignOrder} onNotify={notify} />;
   if (view === 'support') return <AdminSupportView onNotify={notify} />;
   if (view === 'book') return <AdminBookingView onNotify={notify} />;
 

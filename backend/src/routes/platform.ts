@@ -77,4 +77,10 @@ router.get('/orders/:orderId/invoice', async (req, res) => {
   res.json({ invoice: invoice.value, order });
 });
 
+router.get('/customer/invoices', async (req, res) => {
+  if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+  const invoices = await invoicesCollection.find({ client_id: req.user.clientId, owner_uid: req.user.uid }).sort({ created_at: -1 }).limit(100).toArray();
+  res.json({ invoices });
+});
+
 export default router;
