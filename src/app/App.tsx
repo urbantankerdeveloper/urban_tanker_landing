@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from 'react';
 import { AppShell } from '../shared/components/AppShell';
 import { AuthScreen } from '../features/auth/AuthScreen';
 import { CustomerHomeShell } from '../features/customer/CustomerHomeShell';
-import { LoadingSkeleton, Toast } from '../shared/components';
+import { LoadingSkeleton, Toast, WorkspaceSkeleton } from '../shared/components';
 import { contentClientId, flushOfflineMutations, getUserProfile, refreshCloudState, subscribeToCloudState, subscribeToContent, subscribeToOperations } from '../shared/lib/cloudStore';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent } from '../shared/lib/secureCache';
 import { hydrateCloudState, hydrateContent, useAppStore } from './store';
@@ -83,14 +83,14 @@ export function App() {
   if (authLoading || !isHydrated) return <LoadingSkeleton />;
   if (!data.profile) return <AuthScreen />;
   if (data.role === 'customer') return <>
-    <CustomerHomeShell onNavigate={setActive} onSignOut={signOut}><Suspense fallback={<LoadingSkeleton />}><CustomerPortal /></Suspense></CustomerHomeShell>
+    <CustomerHomeShell onNavigate={setActive} onSignOut={signOut}><Suspense fallback={<WorkspaceSkeleton role="customer" />}><CustomerPortal /></Suspense></CustomerHomeShell>
     <Toast message={toast} onClose={dismissToast} />
     {checkoutOpen && <Suspense fallback={<LoadingSkeleton />}><CheckoutModal /></Suspense>}
   </>;
   return <>
     <AppShell role={data.role} active={active} orderCount={data.orders.length} mobileNav={mobileNav} onNavigate={id => setActive(id as Workspace)} onToggleMobileNav={() => setMobileNav(!mobileNav)} onNotify={notify} onSignOut={signOut}>
-      {data.role === 'vendor' && <Suspense fallback={<LoadingSkeleton />}><VendorPortal view={active} /></Suspense>}
-      {data.role === 'admin' && <Suspense fallback={<LoadingSkeleton />}><AdminDeliveryNotifications /><AdminDashboard view={active} /></Suspense>}
+      {data.role === 'vendor' && <Suspense fallback={<WorkspaceSkeleton role="vendor" />}><VendorPortal view={active} /></Suspense>}
+      {data.role === 'admin' && <Suspense fallback={<WorkspaceSkeleton role="admin" />}><AdminDeliveryNotifications /><AdminDashboard view={active} /></Suspense>}
     </AppShell>
     <Toast message={toast} onClose={dismissToast} />
     {checkoutOpen && <Suspense fallback={<LoadingSkeleton />}><CheckoutModal /></Suspense>}

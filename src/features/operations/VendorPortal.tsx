@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { AppData, Order, OrderStatus, Vehicle, Workspace } from "../../shared/lib/types";
 import { Button, PageHeader, StatCard, Status } from "../../shared/components/ui";
+import { WorkspaceSkeleton } from "../../shared/components/LoadingSkeleton";
 import { Pagination } from "../../shared/components/Pagination";
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
@@ -31,6 +32,15 @@ const stages: OrderStatus[] = [
 ];
 
 async function compressImage(file: File): Promise<string> {
+    if (typeof createImageBitmap !== 'function') {
+        const sourceUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Unable to read the vehicle image.'));
+            reader.readAsDataURL(file);
+        });
+        return sourceUrl;
+    }
     const bitmap = await createImageBitmap(file);
     const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement('canvas');
@@ -82,6 +92,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const [incomingOrderState, setIncomingOrderState] = useState<"pending" | "accepted" | "rejected">("pending");
     const [incomingBusy, setIncomingBusy] = useState(false);
     const [acceptSelectionOpen, setAcceptSelectionOpen] = useState(false);
+    const [initialLoading, setInitialLoading] = useState(true);
     const [acceptVehicleId, setAcceptVehicleId] = useState("");
     const [acceptDriverId, setAcceptDriverId] = useState("");
     const [customerContactOpen, setCustomerContactOpen] = useState(false);
@@ -92,15 +103,19 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                 updateVendorLocation(position.coords.latitude, position.coords.longitude).catch(() => undefined);
             }, () => undefined, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
         }
-        const refreshDashboard = () => loadVendorDashboard().then(result => {
-
-            setAvailable(result.vendor?.status === "active" || result.vendor?.available === true);
-            setVendorName(result.vendor?.name || data.profile?.name || "Vendor");
-            setVendorOrders(result.orders || []);
-            useAppStore.setState(state => ({ data: { ...state.data, orders: result.orders || [] } }));
-            const activeOrder = (result.orders || []).find(item => item.status !== "Delivered");
-            if (activeOrder && stages.includes(activeOrder.status)) setStage(activeOrder.status);
-        });
+        const refreshDashboard = async () => {
+            try {
+                const result = await loadVendorDashboard();
+                setAvailable(result.vendor?.status === "active" || result.vendor?.available === true);
+                setVendorName(result.vendor?.name || data.profile?.name || "Vendor");
+                setVendorOrders(result.orders || []);
+                useAppStore.setState(state => ({ data: { ...state.data, orders: result.orders || [] } }));
+                const activeOrder = (result.orders || []).find(item => item.status !== "Delivered");
+                if (activeOrder && stages.includes(activeOrder.status)) setStage(activeOrder.status);
+            } finally {
+                setInitialLoading(false);
+            }
+        };
         void refreshDashboard().catch(() => {
             getVendorAvailability().then(setAvailable).catch(() => undefined);
         });
@@ -152,6 +167,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             document.title = "Urban Tanker | Operations, simplified";
         };
     }, []);
+    if (initialLoading) return <WorkspaceSkeleton role="vendor" />;
     const activeAssignedOrder = vendorOrders.find(item => ['Accepted', 'Vendor accepted', 'En route', 'Arrived'].includes(item.status));
     const toggleAvailability = async () => {
         if (availabilityBusy) return;

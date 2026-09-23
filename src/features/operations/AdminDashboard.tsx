@@ -22,6 +22,10 @@ function AdminViewSkeleton({ title = 'Loading dashboard data...' }: { title?: st
   return <div className="admin-skeleton-page" aria-busy="true" aria-live="polite" aria-label={title}><div className="skeleton-heading admin-skeleton-heading" /><div className="skeleton-copy admin-skeleton-copy" /><div className="admin-skeleton-list">{Array.from({ length: 4 }).map((_, index) => <div className="admin-skeleton-card" key={index}><div className="admin-skeleton-icon" /><div className="admin-skeleton-body"><div className="admin-skeleton-line admin-skeleton-line-lg" /><div className="admin-skeleton-line admin-skeleton-line-md" /><div className="admin-skeleton-line admin-skeleton-line-sm" /></div></div>)}</div></div>;
 }
 
+function AdminCustomersSkeleton() {
+  return <div className="customer-directory-skeleton" aria-busy="true" aria-live="polite" aria-label="Loading customers"><div className="skeleton-heading customer-skeleton-heading" /><div className="skeleton-copy customer-skeleton-copy" /><section className="data-surface customer-skeleton-surface"><div className="customer-skeleton-toolbar"><div className="skeleton-line customer-skeleton-title" /><div className="skeleton-line customer-skeleton-search" /></div><div className="customer-skeleton-header">{Array.from({ length: 4 }).map((_, index) => <div className="skeleton-line" key={index} />)}</div>{Array.from({ length: 5 }).map((_, index) => <div className="customer-skeleton-row" key={index}>{Array.from({ length: 4 }).map((__, cellIndex) => <div className={`skeleton-line customer-skeleton-cell customer-skeleton-cell-${cellIndex + 1}`} key={cellIndex} />)}</div>)}</section></div>;
+}
+
 export function AdminDeliveryNotifications() {
   const [notifications, setNotifications] = useState<DeliveryNotification[]>([]);
   useEffect(() => {
@@ -128,7 +132,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     if (!vendorUid) return;
     try { await assignAdminOrderToVendor(orderId, vendorUid); await refreshDashboard(); notify('Vendor assigned to the order.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to assign the vendor.'); }
   };
-  if (initialLoading && !dashboard) return <AdminViewSkeleton title="Loading admin dashboard" />;
+  if (initialLoading && !dashboard) return view === 'customers' ? <AdminCustomersSkeleton /> : <AdminViewSkeleton title="Loading admin dashboard" />;
   if (view === 'orders') return <AdminOrdersView orders={filteredOrders} vendors={dashboard?.vendors || data.vendors} query={adminQuery} setQuery={setAdminQuery} notifyingOrderId={notifyingOrderId} onRetryNotification={retryNotification} onAssign={assignOrder} />;
   const addAccountToDashboard = (account: Awaited<ReturnType<typeof createAdminAccount>>) => {
     if (account.role === 'vendor') {
