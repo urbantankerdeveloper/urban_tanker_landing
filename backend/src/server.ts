@@ -6,7 +6,11 @@ import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
 import platformRoutes from './routes/platform.js';
-import { closeConnection, contentCollection, driversCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import { registerAdminRoutes } from './routes/admin.js';
+import { registerCustomerRoutes } from './routes/customer.js';
+import { registerSharedRoutes } from './routes/shared.js';
+import { registerVendorRoutes } from './routes/vendor.js';
+import { closeConnection, contentCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import Razorpay from 'razorpay';
 import { hashPassword, hashToken } from './utils/auth.js';
@@ -24,6 +28,8 @@ const PORT = Number(process.env.PORT || 8080);
 const contentCache = new Map();
 const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_MS || 60000);
 const vendorDispatchRadiusKm = Number(process.env.VENDOR_DISPATCH_RADIUS_KM || 25);
+const startedAt = new Date();
+const serviceVersion = process.env.npm_package_version || '1.0.0';
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID as string,
   key_secret: process.env.RAZORPAY_KEY_SECRET as string,
@@ -163,59 +169,43 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+async function getHealthStatus(includeDetails: boolean) {
+  const timestamp = new Date().toISOString();
+  const checks: Record<string, { status: 'ok' | 'error'; latencyMs?: number; message?: string }> = {};
+  const databaseStartedAt = Date.now();
+
+  try {
+    const database = await getDatabase();
+    await database.command({ ping: 1 });
+    checks.database = { status: 'ok', latencyMs: Date.now() - databaseStartedAt };
+  } catch (error) {
+    checks.database = { status: 'error', latencyMs: Date.now() - databaseStartedAt, message: 'Database is unavailable.' };
+    console.error('Health database check failed:', error);
+  }
+
+  const healthy = Object.values(checks).every(check => check.status === 'ok');
+  const response = {
+    status: healthy ? 'ok' : 'degraded',
+    service: 'urban-tanker-backend',
+    version: serviceVersion,
+    timestamp,
+    uptimeSeconds: Math.floor((Date.now() - startedAt.getTime()) / 1000),
+    ...(includeDetails ? { checks } : {}),
+  };
+
+  return { healthy, response };
+}
+
+// Liveness only confirms that the Node.js process is running.
+app.get('/health/live', (_req, res) => {
+  res.status(200).json({ status: 'ok', service: 'urban-tanker-backend', timestamp: new Date().toISOString() });
 });
 
-app.get('/api/notifications', authenticateToken, async (req, res) => {
-  try {
-    const recipientFilter = req.user.role === 'vendor'
-      ? { $or: [{ recipient_role: 'vendor', recipient_uid: req.user.uid }, { recipient_role: 'vendor', recipient_uid: { $exists: false } }] }
-      : { recipient_role: req.user.role, ...(req.user.role === 'customer' ? { recipient_uid: req.user.uid } : {}) };
-    const filter = { client_id: req.user.clientId, ...recipientFilter };
-    const notifications = await notificationsCollection.find(filter, { projection: { _id: 0, id: 1, order_id: 1, title: 1, detail: 1, type: 1, created_at: 1, read_at: 1 } }).sort({ created_at: -1 }).limit(25).toArray();
-    const unreadCount = await notificationsCollection.countDocuments({ ...filter, read_at: { $exists: false } });
-    res.set('Cache-Control', 'no-store');
-    res.json({ unreadCount, notifications: notifications.map(notification => ({ id: notification.id, orderId: notification.order_id, title: notification.title, detail: notification.detail, status: notification.type, timestamp: notification.created_at, read: Boolean(notification.read_at) })) });
-  } catch (error) {
-    console.error('Notifications lookup error:', error);
-    res.status(500).json({ message: 'Unable to load notifications.' });
-  }
-});
-
-app.patch('/api/notifications/:notificationId/read', authenticateToken, async (req, res) => {
-  try {
-    const recipientFilter = req.user.role === 'vendor'
-      ? { $or: [{ recipient_role: 'vendor', recipient_uid: req.user.uid }, { recipient_role: 'vendor', recipient_uid: { $exists: false } }] }
-      : { recipient_role: req.user.role, ...(req.user.role === 'customer' ? { recipient_uid: req.user.uid } : {}) };
-    const result = await notificationsCollection.updateOne({ id: req.params.notificationId, client_id: req.user.clientId, ...recipientFilter }, { $set: { read_at: new Date() } });
-    if (!result.matchedCount) return res.status(404).json({ message: 'Notification was not found.' });
-    res.status(204).send();
-  } catch (error) {
-    console.error('Notification read update error:', error);
-    res.status(500).json({ message: 'Unable to update notification.' });
-  }
-});
-
-app.get('/api/content/:clientId', async (req, res) => {
-  try {
-    const clientId = req.params.clientId;
-    const cached = contentCache.get(clientId);
-    if (cached && cached.expiresAt > Date.now()) {
-      res.set('Cache-Control', 'public, max-age=60');
-      return res.json(cached.value);
-    }
-    const document = await contentCollection.findOne({ client_id: clientId }, { projection: { _id: 0, config: 1, coupons: 1 } });
-    if (!document) return res.status(404).json({ message: 'Content configuration was not found.' });
-    const value = { ...document.config, coupons: document.coupons || [] };
-    contentCache.set(clientId, { value, expiresAt: Date.now() + contentCacheTtlMs });
-    res.set('Cache-Control', 'public, max-age=60');
-    res.json(value);
-  } catch (error) {
-    console.error('Content lookup error:', error);
-    res.status(500).json({ message: 'Unable to load content configuration.' });
-  }
+// Readiness verifies dependencies required to serve API requests.
+app.get(['/health', '/health/ready'], async (req, res) => {
+  const includeDetails = req.query.details === 'true' || req.query.details === '1';
+  const { healthy, response } = await getHealthStatus(includeDetails);
+  res.status(healthy ? 200 : 503).json(response);
 });
 
 app.post('/api/admin/coupons', authenticateToken, async (req, res) => {
@@ -553,6 +543,44 @@ app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req,
   }
 });
 
+app.get('/api/admin/vehicles', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+  const [vehicles, vendors] = await Promise.all([
+    vehiclesCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
+    usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
+  ]);
+  const vendorMap = new Map(vendors.map(vendor => [vendor.uid, vendor.name]));
+  res.json({ vehicles: vehicles.map(vehicle => ({
+    id: vehicle.id,
+    registration_number: vehicle.registration_number,
+    vehicle_type: vehicle.vehicle_type,
+    capacity: vehicle.capacity,
+    active: vehicle.active,
+    vendor_uid: vehicle.vendor_uid,
+    vendor_name: vendorMap.get(vehicle.vendor_uid) || 'Unknown vendor',
+    image_url: vehicle.image_url,
+  })) });
+});
+
+app.get('/api/admin/drivers', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+  const [drivers, vendors] = await Promise.all([
+    driversCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
+    usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
+  ]);
+  const vendorMap = new Map(vendors.map(vendor => [vendor.uid, vendor.name]));
+  res.json({ drivers: drivers.map(driver => ({
+    id: driver.id,
+    name: driver.name,
+    phone: driver.phone,
+    active: driver.active,
+    vendor_uid: driver.vendor_uid,
+    vendor_name: vendorMap.get(driver.vendor_uid) || 'Unknown vendor',
+    address: driver.address,
+    address_proof: driver.address_proof,
+  })) });
+});
+
 app.get('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
   const vendor = await usersCollection.findOne({ uid: req.params.vendorUid, client_id: req.user.clientId, role: 'vendor' }, { projection: { uid: 1 } });
@@ -723,257 +751,74 @@ app.patch('/api/orders/:orderId/rating', authenticateToken, async (req, res) => 
   }
 });
 
-app.post('/api/admin/orders/:orderId/refund', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
-    const order = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { _id: 0, paymentId: 1, amount: 1, payment: 1, owner_uid: 1 } });
-    if (!order) return res.status(404).json({ message: 'Order was not found.' });
-    if (order.payment !== 'Paid' || !order.paymentId) return res.status(400).json({ message: 'This order does not have a refundable Razorpay payment.' });
-    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) return res.status(503).json({ message: 'Refunds are not configured on the backend.' });
-    const refundAmount = Math.round(Number(req.body.amount || order.amount) * 100);
-    if (!Number.isInteger(refundAmount) || refundAmount <= 0 || refundAmount > Math.round(Number(order.amount) * 100)) return res.status(400).json({ message: 'A valid refund amount is required.' });
-    const refund = await razorpay.payments.refund(order.paymentId, { amount: refundAmount });
-    await ordersCollection.updateOne({ id: req.params.orderId, client_id: req.user.clientId }, { $set: { payment: 'Refunded', refundId: refund.id, refundedAt: new Date(), refundAmount: refundAmount / 100, updated_at: new Date() } });
-    if (order.owner_uid) await recordNotification({ clientId: req.user.clientId, recipientRole: 'customer', recipientUid: order.owner_uid, orderId: req.params.orderId, type: 'refunded', title: 'Payment refunded', detail: `${req.params.orderId} · Refund initiated.` });
-    res.json({ orderId: req.params.orderId, refundId: refund.id, status: 'Refunded' });
-  } catch (error) {
-    console.error('Payment refund error:', error);
-    res.status(500).json({ message: 'Unable to process the refund.' });
-  }
+registerAdminRoutes(app, {
+  authenticateToken,
+  contentCollection,
+  contentCache,
+  ordersCollection,
+  vendorsCollection,
+  usersCollection,
+  vehiclesCollection,
+  driversCollection,
+  sessionsCollection,
+  orderHistoryCollection,
+  io,
+  randomUUID,
+  hashPassword,
+  dispatchOrderNotification,
+  recordOrderHistory,
+  recordNotification,
+  removeDeliveryOtpFields,
+  notifyCustomerOfAcceptance,
 });
 
-app.patch('/api/vendor/availability', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
-    const status = req.body.status === 'active' || req.body.available === true ? 'active' : 'inactive';
-    const available = status === 'active';
-    if (!available) {
-      const activeOrder = await ordersCollection.findOne({ client_id: req.user.clientId, assigned_vendor_uid: req.user.uid, status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] } }, { projection: { _id: 0, id: 1 } });
-      if (activeOrder) return res.status(409).json({ message: `You cannot go offline while order ${activeOrder.id} is active.` });
-    }
-    await vendorsCollection.updateOne(
-      { uid: req.user.uid, client_id: req.user.clientId },
-      {
-        $set: { available, status, updated_at: new Date() },
-        $setOnInsert: { uid: req.user.uid, client_id: req.user.clientId, name: req.user.displayName || 'Vendor', email: req.user.email || '', phone: req.user.phoneNumber || null, driver: req.user.displayName || 'Vendor', zone: '', vehicle: '', capacity: '', rating: '' },
-      },
-      { upsert: true },
-    );
-    await usersCollection.updateOne(
-      { uid: req.user.uid, client_id: req.user.clientId, role: 'vendor' },
-      { $set: { status, available, updated_at: new Date() } },
-    );
-    res.json({ available, status });
-  } catch (error) {
-    console.error('Vendor availability error:', error);
-    res.status(500).json({ message: 'Unable to update vendor availability.' });
-  }
+registerVendorRoutes(app, {
+  authenticateToken,
+  vendorsCollection,
+  vehiclesCollection,
+  driversCollection,
+  ordersCollection,
+  usersCollection,
+  io,
+  randomUUID,
+  createHash,
+  randomInt,
+  notifyCustomerOfAcceptance,
+  removeDeliveryOtpFields,
+  recordOrderHistory,
+  recordNotification,
+  vendorDispatchRadiusKm,
+  distanceKm,
 });
 
-app.patch('/api/vendor/location', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
-    const latitude = Number(req.body.latitude);
-    const longitude = Number(req.body.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return res.status(400).json({ message: 'A valid vendor location is required.' });
-    await vendorsCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId }, { $set: { latitude, longitude, location_updated_at: new Date(), updated_at: new Date() } }, { upsert: true });
-    res.json({ latitude, longitude });
-  } catch (error) {
-    console.error('Vendor location error:', error);
-    res.status(500).json({ message: 'Unable to update vendor location.' });
-  }
+registerCustomerRoutes(app, {
+  authenticateToken,
+  ordersCollection,
+  orderHistoryCollection,
+  notificationsCollection,
+  usersCollection,
+  io,
+  createHash,
+  randomInt,
+  recordOrderHistory,
+  recordNotification,
+  dispatchOrderNotification,
 });
 
-app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
-    const allowedStatuses = ['Created', 'Pending acceptance', 'Accepted', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected', 'En route', 'Arrived', 'Delivered'];
-    const update: Record<string, any> = {};
-    const action = req.body.action;
-    let selectedVehicle: Record<string, any> | null = null;
-    if (action === 'accept') {
-      selectedVehicle = await vehiclesCollection.findOne({ id: req.body.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true }, { projection: { _id: 0 } });
-      if (!selectedVehicle) return res.status(400).json({ message: 'Select an active vehicle before accepting the order.' });
-      const selectedDriver = await driversCollection.findOne({ id: req.body.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true });
-      if (!selectedDriver) return res.status(400).json({ message: 'Select an active driver before accepting the order.' });
-      await vehiclesCollection.updateOne(
-        { id: selectedVehicle.id, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true },
-        { $set: { driver_id: selectedDriver.id, driver_name: selectedDriver.name, driver_phone: selectedDriver.phone, driver_active: selectedDriver.active, updated_at: new Date() } },
-      );
-      update.status = 'Accepted';
-      update.vendorDecision = 'accepted';
-      update.vendorAcceptedAt = new Date();
-      update.assigned_vendor_uid = req.user.uid;
-      update.vendor = req.user.displayName || 'Assigned vendor';
-      update.vendorEmail = req.user.email;
-      update.vendorPhone = req.user.phoneNumber || null;
-      update.vehicleId = selectedVehicle.id;
-      update.vehicleRegistrationNumber = selectedVehicle.registration_number;
-      update.vehicleType = selectedVehicle.vehicle_type;
-      update.vehicleCapacity = selectedVehicle.capacity;
-      update.driverId = selectedDriver.id;
-      update.driver = selectedDriver.name;
-      update.driverPhone = selectedDriver.phone;
-      update.driverActive = selectedDriver.active;
-      const customerDeliveryOtp = String(randomInt(100000, 1000000));
-      update.customerDeliveryOtp = customerDeliveryOtp;
-      update.deliveryOtpHash = createHash('sha256').update(customerDeliveryOtp).digest('hex');
-    } else if (action === 'reject') {
-      update.status = 'Rejected';
-      update.vendorDecision = 'rejected';
-      update.vendorRejectedAt = new Date();
-      update.vendorRejectionReason = String(req.body.rejectionReason || 'Vendor declined the assignment.').trim().slice(0, 500);
-    } else if (allowedStatuses.includes(req.body.status)) update.status = req.body.status;
-    if (typeof req.body.eta === 'string') update.eta = req.body.eta;
-    if (typeof req.body.vendorLatitude === 'number') update.vendorLatitude = req.body.vendorLatitude;
-    if (typeof req.body.vendorLongitude === 'number') update.vendorLongitude = req.body.vendorLongitude;
-    if (typeof req.body.deliveryOtp === 'string') {
-      const order = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId, assigned_vendor_uid: req.user.uid }, { projection: { deliveryOtpHash: 1, status: 1 } });
-      if (!order) return res.status(404).json({ message: 'Vendor order was not found.' });
-      const submittedOtpHash = createHash('sha256').update(req.body.deliveryOtp).digest('hex');
-      if (!order.deliveryOtpHash || submittedOtpHash !== order.deliveryOtpHash) return res.status(400).json({ message: 'The delivery OTP is invalid.' });
-      update.status = 'Delivered';
-      update.otpVerifiedAt = new Date();
-    }
-    if (typeof req.body.deliveryProof === 'string' && req.body.deliveryProof.length <= 2_000_000) update.deliveryProofUrl = req.body.deliveryProof;
-    if (typeof req.body.vendorLatitude === 'number' || typeof req.body.vendorLongitude === 'number') update.lastLocationUpdatedAt = new Date();
-    if (!Object.keys(update).length) return res.status(400).json({ message: 'No valid order update was provided.' });
-    const orderFilter = action === 'accept'
-      ? { id: req.params.orderId, client_id: req.user.clientId, $or: [{ assigned_vendor_uid: req.user.uid }, { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } }] }
-      : {
-          id: req.params.orderId,
-          client_id: req.user.clientId,
-          $or: [
-            { assigned_vendor_uid: req.user.uid },
-            { status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false } },
-          ],
-        };
-    const existing = await ordersCollection.findOne(orderFilter, { projection: { _id: 0, status: 1, owner_uid: 1, customerEmail: 1, customerPhone: 1 } });
-    if (!existing) {
-      const orderExists = await ordersCollection.findOne({ id: req.params.orderId, client_id: req.user.clientId }, { projection: { assigned_vendor_uid: 1, status: 1 } });
-      if (action === 'accept' && orderExists?.assigned_vendor_uid && orderExists.assigned_vendor_uid !== req.user.uid) return res.status(409).json({ message: 'This order has already been accepted by another vendor.' });
-      return res.status(404).json({ message: 'Vendor order was not found for this tenant or vendor.' });
-    }
-    const updateDocument: Record<string, any> = { $set: update };
-    if (update.status && existing.status !== update.status) updateDocument.$push = { statusHistory: { status: update.status, timestamp: new Date(), actorUid: req.user.uid, actorRole: req.user.role, ...(action === 'reject' ? { vendorUid: req.user.uid, rejectionReason: update.vendorRejectionReason } : {}) } };
-    if (action === 'reject') updateDocument.$addToSet = { rejectedVendorUids: req.user.uid };
-    const result = await ordersCollection.updateOne(orderFilter, updateDocument);
-    if (!result.matchedCount) return res.status(404).json({ message: 'Vendor order was not found.' });
-    await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: update.status || existing.status, actorUid: req.user.uid, actorRole: req.user.role, ...(action === 'reject' ? { vendorUid: req.user.uid, rejectionReason: update.vendorRejectionReason } : {}) });
-    const notificationTitle = update.status === 'Delivered' ? 'Order delivered' : action === 'reject' ? 'Order rejected' : action === 'accept' ? 'Order accepted' : `Order ${String(update.status || existing.status).toLowerCase()}`;
-    await Promise.all([
-      recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: String(update.status || existing.status).toLowerCase().replace(/\s+/g, '-'), title: notificationTitle, detail: `${req.params.orderId} · ${req.user.displayName || 'Vendor'}` }),
-      ...(existing.owner_uid ? [recordNotification({ clientId: req.user.clientId, recipientRole: 'customer', recipientUid: existing.owner_uid, orderId: req.params.orderId, type: String(update.status || existing.status).toLowerCase().replace(/\s+/g, '-'), title: notificationTitle, detail: `${req.params.orderId} · ${req.user.displayName || 'Vendor'}` })] : []),
-    ]);
-    if (action === 'accept') {
-      const customer = existing.customerEmail || existing.customerPhone ? existing : await usersCollection.findOne(
-        { uid: existing.owner_uid, client_id: req.user.clientId, role: 'customer' },
-        { projection: { _id: 0, email: 1, phoneNumber: 1 } },
-      );
-      const acceptedOrder = {
-        ...existing,
-        ...update,
-        customerEmail: existing.customerEmail || customer?.email,
-        customerPhone: existing.customerPhone || customer?.phoneNumber,
-      };
-      if (selectedVehicle) void notifyCustomerOfAcceptance(acceptedOrder, selectedVehicle).catch(error => console.error('Acceptance notification error:', error));
-      io.to(`vendor:${req.user.clientId}`).emit('order:accepted', { orderId: req.params.orderId, vendorUid: req.user.uid, vendorName: req.user.displayName || 'Another vendor' });
-      if (existing.owner_uid) io.to(`customer:${existing.owner_uid}`).emit('order:accepted', { orderId: req.params.orderId, vendorUid: req.user.uid, vendorName: req.user.displayName || 'Your vendor' });
-    } else if (action === 'reject') {
-      io.to(`vendor:${req.user.clientId}`).emit('order:rejected', { orderId: req.params.orderId, vendorUid: req.user.uid });
-    }
-    if (update.status === 'Delivered') io.to(`admin:${req.user.clientId}`).emit('order:delivered', { orderId: req.params.orderId, vendorName: req.user.displayName || 'Vendor' });
-    res.json(removeDeliveryOtpFields({ id: req.params.orderId, ...update }));
-  } catch (error) {
-    console.error('Vendor order update error:', error);
-    res.status(500).json({ message: 'Unable to update vendor order.' });
-  }
-});
-
-// Create Razorpay order
-app.post('/createRazorpayOrder', authenticateToken, async (req, res) => {
-  try {
-    const amount = Number(req.body.amount);
-
-    const receipt =
-      typeof req.body.receipt === 'string'
-        ? req.body.receipt
-        : `urban-tanker-${Date.now()}`;
-
-    if (!Number.isInteger(amount) || amount <= 0) {
-      return res.status(400).json({
-        message: 'A valid payment amount is required.',
-      });
-    }
-
-    const razorpayOrder = await razorpay.orders.create({
-      amount,
-      currency: 'INR',
-      receipt,
-    });
-
-    return res.json({
-      orderId: razorpayOrder.id,
-      amount: razorpayOrder.amount,
-      currency: razorpayOrder.currency,
-      keyId: process.env.RAZORPAY_KEY_ID,
-    });
-  } catch (error) {
-    console.error('Razorpay order creation error:', error);
-
-    return res.status(500).json({
-      message: 'Unable to create Razorpay order.',
-    });
-  }
-});
-
-// Verify Razorpay payment
-app.post('/verifyRazorpayPayment', authenticateToken, async (req, res) => {
-  try {
-    const {
-      razorpayOrderId,
-      razorpayPaymentId,
-      razorpaySignature,
-    } = req.body;
-
-    if (
-      typeof razorpayOrderId !== 'string' ||
-      typeof razorpayPaymentId !== 'string' ||
-      typeof razorpaySignature !== 'string'
-    ) {
-      return res.status(400).json({
-        message: 'Razorpay payment details are incomplete.',
-      });
-    }
-
-    const expectedSignature = createHmac(
-      'sha256',
-      process.env.RAZORPAY_KEY_SECRET as string,
-    )
-      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
-      .digest('hex');
-
-    const verified = expectedSignature === razorpaySignature;
-
-    if (!verified) {
-      return res.status(400).json({
-        verified: false,
-        message: 'Razorpay payment verification failed.',
-      });
-    }
-
-    return res.json({
-      verified: true,
-      paymentId: razorpayPaymentId,
-      orderId: razorpayOrderId,
-    });
-  } catch (error) {
-    console.error('Razorpay payment verification error:', error);
-
-    return res.status(500).json({
-      message: 'Unable to verify Razorpay payment.',
-    });
-  }
+registerSharedRoutes(app, {
+  authenticateToken,
+  notificationsCollection,
+  contentCollection,
+  contentCache,
+  ordersCollection,
+  invoicesCollection,
+  subscriptionsCollection,
+  usersCollection,
+  razorpay,
+  createHmac,
+  randomUUID,
+  recordNotification,
+  contentCacheTtlMs,
 });
 
 // API Routes

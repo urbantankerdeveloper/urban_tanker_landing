@@ -294,6 +294,39 @@ export async function loadAdminVendorDrivers(vendorUid: string): Promise<Array<{
   return (payload.drivers || []).map(driver => ({ id: driver.id, name: driver.name, phone: driver.phone || '', active: driver.active }));
 }
 
+export async function loadAdminVehicles(): Promise<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean; vendorUid: string; vendorName: string }>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vehicles`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { vehicles?: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; vendor_uid?: string; vendor_name?: string; image_url?: string }>; message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to load vehicles.');
+  return (payload.vehicles || []).map(vehicle => ({
+    id: vehicle.id,
+    registrationNumber: vehicle.registration_number,
+    vehicleType: vehicle.vehicle_type,
+    capacity: vehicle.capacity || '',
+    active: vehicle.active,
+    vendorUid: vehicle.vendor_uid || '',
+    vendorName: vehicle.vendor_name || 'Unknown vendor',
+  }));
+}
+
+export async function loadAdminDrivers(): Promise<Array<{ id: string; name: string; phone: string; active: boolean; vendorUid: string; vendorName: string }>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/drivers`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { drivers?: Array<{ id: string; name: string; phone?: string; active: boolean; vendor_uid?: string; vendor_name?: string }>; message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to load drivers.');
+  return (payload.drivers || []).map(driver => ({
+    id: driver.id,
+    name: driver.name,
+    phone: driver.phone || '',
+    active: driver.active,
+    vendorUid: driver.vendor_uid || '',
+    vendorName: driver.vendor_name || 'Unknown vendor',
+  }));
+}
+
 export async function setVendorDriverStatus(driverId: string, active: boolean): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
