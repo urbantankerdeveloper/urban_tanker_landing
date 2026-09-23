@@ -4,13 +4,14 @@ import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { assignAdminOrderToVendor, contentClientId, createAdminAccount, loadAdminDashboard, loadAdminOrderHistory, loadContent, notifyVendorsOfOrder, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
+import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, loadAdminDashboard, loadAdminOrderHistory, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
 import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '../../shared/lib/apiConfig';
 import { getAuthToken } from '../../features/auth/auth';
+import { DispatchBoard } from './DispatchBoard';
 
 const buildCsvReport = (headers: string[], rows: Array<Array<string | number | undefined>>) =>
   [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -132,13 +133,14 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     }
   };
   if (view === 'customers') return <AdminCustomersView customers={dashboard?.customers || []} onCreated={addAccountToDashboard} />;
-  if (view === 'vendors') return <AdminVendorsView vendors={dashboard?.vendors || data.vendors} onCreated={addAccountToDashboard} onUpdated={(uid, status, available) => {
+  if (view === 'vendors') return <AdminVendorsView vendors={dashboard?.vendors || data.vendors} onCreated={addAccountToDashboard} onNotify={notify} onUpdated={(uid, status, available) => {
     const updateVendor = (vendor: AppData['vendors'][number]) => vendor.uid === uid ? { ...vendor, status, available } : vendor;
     setDashboard(current => current ? { ...current, vendors: current.vendors.map(updateVendor) } : current);
     update({ vendors: data.vendors.map(updateVendor) });
   }} />;
   if (view === 'coupons') return <AdminCouponsView />;
   if (view === 'track') return <AdminTrackingView orders={data.orders} vendors={data.vendors} />;
+  if (view === 'dispatch') return <DispatchBoard orders={data.orders} vendors={data.vendors} onAssign={assignOrder} onNotify={notify} />;
   if (view === 'support') return <AdminSupportView onNotify={notify} />;
   if (view === 'book') return <AdminBookingView onNotify={notify} />;
 
@@ -156,11 +158,24 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
 
 function AdminCouponsView() {
   const coupons = useAppStore(state => state.content.coupons);
+  const notify = useAppStore(state => state.notify);
   const [page, setPage] = useState(1);
+  const [open, setOpen] = useState(false);
+  const [busyCode, setBusyCode] = useState<string | null>(null);
+  const [form, setForm] = useState({ code: '', label: '', discount: '', service: '', firstBooking: false });
   const visibleCoupons = coupons.slice((page - 1) * 10, page * 10);
+  const toggleCoupon = async (coupon: typeof coupons[number]) => {
+    setBusyCode(coupon.code);
+    try { await updateAdminCouponStatus(coupon.code, coupon.active === false); useAppStore.setState(state => ({ content: { ...state.content, coupons: state.content.coupons.map(item => item.code === coupon.code ? { ...item, active: coupon.active === false } : item) } })); notify(`Coupon ${coupon.active === false ? 'enabled' : 'disabled'}.`); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to update coupon.'); } finally { setBusyCode(null); }
+  };
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try { const coupon = await createAdminCoupon({ code: form.code, label: form.label, discount: Number(form.discount), service: form.service || undefined, firstBooking: form.firstBooking }); useAppStore.setState(state => ({ content: { ...state.content, coupons: [coupon, ...state.content.coupons] } })); setForm({ code: '', label: '', discount: '', service: '', firstBooking: false }); setOpen(false); notify('Coupon created and enabled.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to create coupon.'); }
+  };
   return <>
-    <PageHeader eyebrow="Admin workspace · Coupons" title="Coupon controls." copy="Review the offers currently available to customers." />
-    <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Customer offers</span><h2>{coupons.length} coupons</h2></div><Status>MongoDB content</Status></div><div className="table-scroll"><table><thead><tr><th>Code</th><th>Offer</th><th>Service</th><th>Discount</th><th>Status</th></tr></thead><tbody>{visibleCoupons.map(coupon => <tr key={coupon.code}><td><b className="mono">{coupon.code}</b></td><td>{coupon.label}<small>{coupon.firstBooking ? 'First booking only' : 'All eligible bookings'}</small></td><td>{coupon.service || 'All services'}</td><td><b>{coupon.discount}{coupon.discount < 100 ? '%' : ' off'}</b></td><td><Status>{coupon.active === false ? 'Inactive' : 'Active'}</Status></td></tr>)}</tbody></table>{!coupons.length && <div className="empty-state"><h3>No coupons configured</h3><p>Add coupons through the MongoDB content configuration.</p></div>}</div><Pagination page={page} pageSize={10} total={coupons.length} onPageChange={setPage} /></article>
+    <PageHeader eyebrow="Admin workspace · Coupons" title="Coupon controls." copy="Review the offers currently available to customers." action={<Button variant="primary" icon={Plus} onClick={() => setOpen(true)}>Add coupon</Button>} />
+    <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Customer offers</span><h2>{coupons.length} coupons</h2></div></div><div className="table-scroll"><table><thead><tr><th>Code</th><th>Offer</th><th>Service</th><th>Discount</th><th>Status</th></tr></thead><tbody>{visibleCoupons.map(coupon => <tr key={coupon.code}><td><b className="mono">{coupon.code}</b></td><td>{coupon.label}<small>{coupon.firstBooking ? 'First booking only' : 'All eligible bookings'}</small></td><td>{coupon.service || 'All services'}</td><td><b>{coupon.discount}{coupon.discount < 100 ? '%' : ' off'}</b></td><td><button className="coupon-status-control" type="button" onClick={() => void toggleCoupon(coupon)} disabled={busyCode === coupon.code} aria-label={`${coupon.active === false ? 'Enable' : 'Disable'} coupon ${coupon.code}`}><Status>{busyCode === coupon.code ? 'Updating' : coupon.active === false ? 'Inactive · Enable' : 'Active · Disable'}</Status></button></td></tr>)}</tbody></table>{!coupons.length && <div className="empty-state"><h3>No coupons configured</h3><p>Create a coupon to make an offer available to customers.</p></div>}</div><Pagination page={page} pageSize={10} total={coupons.length} onPageChange={setPage} /></article>
+    {open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="coupon-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close coupon form">×</button><span className="eyebrow">Customer offer</span><h2 id="coupon-dialog-title">Add a new coupon.</h2><form className="auth-form" onSubmit={submit}><label>Coupon code<input value={form.code} onChange={event => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="WATER200" pattern="[A-Z0-9_-]{3,30}" required /></label><label>Offer label<input value={form.label} onChange={event => setForm({ ...form, label: event.target.value })} placeholder="₹200 off water bookings" required /></label><div className="field-row"><label>Discount<input type="number" min="1" step="1" value={form.discount} onChange={event => setForm({ ...form, discount: event.target.value })} required /></label><label>Service<select value={form.service} onChange={event => setForm({ ...form, service: event.target.value })}><option value="">All services</option><option>Water tanker</option><option>Sewage pickup</option></select></label></div><label className="remember-option"><input type="checkbox" checked={form.firstBooking} onChange={event => setForm({ ...form, firstBooking: event.target.checked })} /> First booking only</label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Create coupon</Button></div></form></section></div>}
   </>;
 }
 
@@ -179,7 +194,7 @@ function AdminCustomersView({ customers, onCreated }: { customers: AdminCustomer
   </>;
 }
 
-function AdminVendorsView({ vendors, onCreated, onUpdated }: { vendors: AppData['vendors']; onCreated: (account: Awaited<ReturnType<typeof createAdminAccount>>) => void; onUpdated: (uid: string, status: string, available: boolean) => void }) {
+function AdminVendorsView({ vendors, onCreated, onNotify, onUpdated }: { vendors: AppData['vendors']; onCreated: (account: Awaited<ReturnType<typeof createAdminAccount>>) => void; onNotify: (message: string) => void; onUpdated: (uid: string, status: string, available: boolean) => void }) {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [busyUid, setBusyUid] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -193,8 +208,8 @@ function AdminVendorsView({ vendors, onCreated, onUpdated }: { vendors: AppData[
     try {
       const result = await updateAdminVendorStatus(vendor.uid, active);
       onUpdated(result.uid, result.status, result.available);
-    } catch {
-      // The parent dashboard displays the existing status until the next refresh.
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Unable to update vendor status.');
     } finally {
       setBusyUid(null);
     }

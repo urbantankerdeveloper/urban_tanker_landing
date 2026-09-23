@@ -275,6 +275,8 @@ const initDatabase = async () => {
     await db.collection('users').createIndex({ created_at: -1 }, { name: 'created_at_desc' });
     await db.collection('orders').createIndex({ client_id: 1, owner_uid: 1, created: -1 }, { name: 'customer_orders' });
     await db.collection('orders').createIndex({ client_id: 1, status: 1, assigned_vendor_uid: 1 }, { name: 'dispatch_queue' });
+    await db.collection('orders').createIndex({ client_id: 1, updated_at: -1, id: 1 }, { name: 'admin_order_cursor' });
+    await db.collection('orders').createIndex({ client_id: 1, assigned_vendor_uid: 1, status: 1, updated_at: -1 }, { name: 'vendor_order_cursor' });
     const duplicateOrders = await db.collection('orders').aggregate([
       { $group: { _id: { client_id: '$client_id', id: '$id' }, count: { $sum: 1 } } },
       { $match: { count: { $gt: 1 } } },

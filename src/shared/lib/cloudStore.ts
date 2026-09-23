@@ -3,6 +3,8 @@ import { getCurrentUser } from '../../features/auth/auth';
 import { API_BASE_URL } from './apiConfig';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent, saveEncryptedState } from './secureCache';
 import type { AppData, Profile, Role, Vehicle, Vendor } from './types';
+import type { CouponContent } from './content';
+import { notificationsResponseSchema, orderHistoryItemSchema, parseApiResponse } from './apiSchemas';
 
 export type CloudState = Record<string, unknown>;
 export type CloudStateHandler = (state: CloudState) => void;
@@ -63,7 +65,7 @@ export async function loadNotifications(): Promise<{ unreadCount: number; notifi
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/notifications`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
   if (!response.ok) throw new Error('Unable to load notifications.');
-  return await response.json() as { unreadCount: number; notifications: NotificationItem[] };
+  return parseApiResponse(notificationsResponseSchema, await response.json());
 }
 
 export async function markNotificationsRead(notificationIds: string[]): Promise<void> {
@@ -91,8 +93,30 @@ export async function persistCloudState(state: CloudState): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` },
       body: JSON.stringify({ ...withoutUndefined(order), ownerUid: user.uid }),
-    }).then(response => { if (!response.ok) throw new Error('Unable to persist order.'); })));
+    }).then(response => { if (!response.ok) throw new Error('Unable to persist order.'); }).catch(() => enqueueOfflineMutation(order))));
   }
+}
+
+const OFFLINE_MUTATION_KEY = 'urban-tanker-offline-order-mutations';
+function enqueueOfflineMutation(order: AppData['orders'][number]): void {
+  const queue = JSON.parse(localStorage.getItem(OFFLINE_MUTATION_KEY) || '[]') as AppData['orders'];
+  const next = [...queue.filter(item => item.id !== order.id), order].slice(-50);
+  localStorage.setItem(OFFLINE_MUTATION_KEY, JSON.stringify(next));
+}
+
+export async function flushOfflineMutations(): Promise<void> {
+  const user = getCurrentUser();
+  if (!user || !navigator.onLine) return;
+  const queue = JSON.parse(localStorage.getItem(OFFLINE_MUTATION_KEY) || '[]') as AppData['orders'];
+  if (!queue.length) return;
+  const remaining: AppData['orders'] = [];
+  for (const order of queue) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}` }, body: JSON.stringify({ ...withoutUndefined(order), ownerUid: user.uid }) });
+      if (!response.ok) remaining.push(order);
+    } catch { remaining.push(order); }
+  }
+  localStorage.setItem(OFFLINE_MUTATION_KEY, JSON.stringify(remaining));
 }
 
 export async function loadCustomerOrders(): Promise<AppData['orders']> {
@@ -137,6 +161,14 @@ export async function loadCustomerSubscriptions(): Promise<Array<Record<string, 
   return ((await response.json()) as { subscriptions?: Array<Record<string, unknown>> }).subscriptions || [];
 }
 
+export async function loadCustomerInvoices(): Promise<Array<Record<string, unknown>>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/customer/invoices`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
+  if (!response.ok) throw new Error('Unable to load invoices.');
+  return ((await response.json()) as { invoices?: Array<Record<string, unknown>> }).invoices || [];
+}
+
 export async function createCustomerSubscription(input: { service: string; capacity: string; frequency: string; nextDelivery: string }): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
@@ -150,6 +182,14 @@ export async function loadVendorMaintenance(): Promise<Array<Record<string, unkn
   const response = await fetch(`${API_BASE_URL}/api/vendor/maintenance`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
   if (!response.ok) throw new Error('Unable to load maintenance records.');
   return ((await response.json()) as { records?: Array<Record<string, unknown>> }).records || [];
+}
+
+export async function loadVendorExpiringDocuments(): Promise<Array<Record<string, unknown>>> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/vendor/fleet/expiring-documents`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  if (!response.ok) throw new Error('Unable to load document expiry alerts.');
+  return ((await response.json()) as { vehicles?: Array<Record<string, unknown>> }).vehicles || [];
 }
 
 export async function createVendorMaintenance(input: { vehicleId: string; scheduledAt: string; description: string; cost: number }): Promise<void> {
@@ -218,17 +258,17 @@ export async function loadVendorVehicles(): Promise<Vehicle[]> {
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/vendor/vehicles`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
   if (!response.ok) throw new Error('Unable to load vehicles.');
-  const result = await response.json() as { vehicles: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; driver_id?: string; driver_name?: string; driver_phone?: string; driver_active?: boolean }> };
-  return (result.vehicles || []).map(vehicle => ({ id: vehicle.id, registrationNumber: vehicle.registration_number, vehicleType: vehicle.vehicle_type, capacity: vehicle.capacity || '', active: vehicle.active, driverId: vehicle.driver_id || '', driverName: vehicle.driver_name || '', driverPhone: vehicle.driver_phone || '', driverActive: vehicle.driver_active === true, imageUrl: (vehicle as any).image_url }));
+  const result = await response.json() as { vehicles: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; driver_id?: string; driver_name?: string; driver_phone?: string; driver_active?: boolean; image_url?: string; registration_expiry?: string; insurance_expiry?: string; permit_expiry?: string }> };
+  return (result.vehicles || []).map(vehicle => ({ id: vehicle.id, registrationNumber: vehicle.registration_number, vehicleType: vehicle.vehicle_type, capacity: vehicle.capacity || '', active: vehicle.active, driverId: vehicle.driver_id || '', driverName: vehicle.driver_name || '', driverPhone: vehicle.driver_phone || '', driverActive: vehicle.driver_active === true, imageUrl: vehicle.image_url, registrationExpiry: vehicle.registration_expiry, insuranceExpiry: vehicle.insurance_expiry, permitExpiry: vehicle.permit_expiry }));
 }
 
-export async function createVendorVehicle(input: { registrationNumber: string; vehicleType: string; capacity: string; driverName: string; driverPhone: string; imageUrl?: string }): Promise<Vehicle> {
+export async function createVendorVehicle(input: { registrationNumber: string; vehicleType: string; capacity: string; driverName: string; driverPhone: string; imageUrl?: string; registrationExpiry?: string; insuranceExpiry?: string; permitExpiry?: string }): Promise<Vehicle> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/vendor/vehicles`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
-  const payload = await response.json() as { vehicle?: { id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; driver_id?: string; driver_name?: string; driver_phone?: string; driver_active?: boolean }; message?: string };
+  const payload = await response.json() as { vehicle?: { id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; driver_id?: string; driver_name?: string; driver_phone?: string; driver_active?: boolean; image_url?: string; registration_expiry?: string; insurance_expiry?: string; permit_expiry?: string }; message?: string };
   if (!response.ok || !payload.vehicle) throw new Error(payload.message || 'Unable to create vehicle.');
-  return { id: payload.vehicle.id, registrationNumber: payload.vehicle.registration_number, vehicleType: payload.vehicle.vehicle_type, capacity: payload.vehicle.capacity || '', active: payload.vehicle.active, driverId: payload.vehicle.driver_id || '', driverName: payload.vehicle.driver_name || '', driverPhone: payload.vehicle.driver_phone || '', driverActive: payload.vehicle.driver_active === true, imageUrl: (payload.vehicle as any).image_url };
+  return { id: payload.vehicle.id, registrationNumber: payload.vehicle.registration_number, vehicleType: payload.vehicle.vehicle_type, capacity: payload.vehicle.capacity || '', active: payload.vehicle.active, driverId: payload.vehicle.driver_id || '', driverName: payload.vehicle.driver_name || '', driverPhone: payload.vehicle.driver_phone || '', driverActive: payload.vehicle.driver_active === true, imageUrl: payload.vehicle.image_url, registrationExpiry: payload.vehicle.registration_expiry, insuranceExpiry: payload.vehicle.insurance_expiry, permitExpiry: payload.vehicle.permit_expiry };
 }
 
 export async function setVendorVehicleActive(vehicleId: string, active: boolean): Promise<void> {
@@ -322,7 +362,10 @@ export async function loadAdminOrderHistory(orderId: string): Promise<OrderHisto
   const response = await fetch(`${API_BASE_URL}/api/admin/orders/${encodeURIComponent(orderId)}/history`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
   const payload = await response.json().catch(() => ({})) as { history?: OrderHistoryItem[]; message?: string };
   if (!response.ok) throw new Error(payload.message || 'Unable to load order history.');
-  return payload.history || [];
+  return (payload.history || []).map(item => {
+    const parsed = parseApiResponse(orderHistoryItemSchema, item);
+    return { ...parsed, timestamp: parsed.timestamp || new Date() };
+  });
 }
 
 export async function createAdminAccount(input: AdminAccountInput): Promise<{ uid: string; role: AdminAccountInput['role']; name: string; email: string; phone: string; status: string; available: boolean }> {
@@ -352,6 +395,23 @@ export async function updateAdminVendorStatus(vendorUid: string, active: boolean
   const payload = await response.json().catch(() => ({})) as { uid?: string; status?: string; available?: boolean; message?: string };
   if (!response.ok || !payload.uid) throw new Error(payload.message || 'Unable to update vendor status.');
   return { uid: payload.uid, status: payload.status || (active ? 'active' : 'inactive'), available: payload.available === true };
+}
+
+export async function createAdminCoupon(input: { code: string; label: string; discount: number; service?: string; firstBooking?: boolean }): Promise<CouponContent> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/coupons`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { coupon?: CouponContent; message?: string };
+  if (!response.ok || !payload.coupon) throw new Error(payload.message || 'Unable to create coupon.');
+  return payload.coupon;
+}
+
+export async function updateAdminCouponStatus(code: string, active: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/coupons/${encodeURIComponent(code)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update coupon status.');
 }
 
 export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string; rejectionReason?: string; deliveryProof?: string } = {}): Promise<void> {

@@ -13,14 +13,16 @@ export function StatCard({ icon: Icon, label, value, detail, tone = '' }: StatCa
 }
 
 export function Status({ children }: { children: ReactNode }) {
-  const tone = String(children).toLowerCase().replace(/ /g, '-');
-  return <span className={`status status-${tone}`}><span />{children}</span>;
+  const rawLabel = String(children);
+  const label = rawLabel === 'Vendor assigned' ? 'Assigned' : rawLabel;
+  const tone = rawLabel.toLowerCase().replace(/ /g, '-');
+  return <span className={`status status-${tone}`}><span />{label}</span>;
 }
 
 export function Button({ children, variant = '', onClick, icon: Icon, type = 'button', disabled = false }: ButtonProps) {
   return <button type={type} onClick={onClick} className={`button ${variant}`} disabled={disabled}>{Icon && <Icon size={16} />}{children}</button>;
 }
 
-export function UserBadge({ initials = 'AM', onClick }) {
+export function UserBadge({ initials = 'AM', onClick }: { initials?: string; onClick?: () => void }) {
   return <button className="avatar" onClick={onClick} aria-label="Sign out and return to login">{initials}</button>;
 }

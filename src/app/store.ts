@@ -14,6 +14,12 @@ interface AppStore {
   toast: string;
   mobileNav: boolean;
   checkoutOpen: boolean;
+  sidebarCollapsed: boolean;
+  searchQuery: string;
+  searchOpen: boolean;
+  online: boolean;
+  notificationOpen: boolean;
+  notificationCount: number;
   authRole: Role;
   authName: string;
   authEmail: string;
@@ -33,6 +39,12 @@ interface AppStore {
   notify: (message: string) => void;
   dismissToast: () => void;
   setCheckoutOpen: (open: boolean) => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setSearchQuery: (query: string) => void;
+  setSearchOpen: (open: boolean) => void;
+  setOnline: (online: boolean) => void;
+  setNotificationOpen: (open: boolean) => void;
+  setNotificationCount: (count: number) => void;
   setAuthRole: (role: Role) => void;
   setAuthName: (name: string) => void;
   setAuthEmail: (email: string) => void;
@@ -55,7 +67,7 @@ interface AppStore {
 let toastTimer: number | undefined;
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  data: initialState, content: defaultContent, isHydrated: false, active: 'overview', toast: '', mobileNav: false, checkoutOpen: false,
+  data: initialState, content: defaultContent, isHydrated: false, active: 'overview', toast: '', mobileNav: false, checkoutOpen: false, sidebarCollapsed: false, searchQuery: '', searchOpen: false, online: typeof navigator === 'undefined' ? true : navigator.onLine, notificationOpen: false, notificationCount: 0,
   authRole: 'customer', authName: '', authEmail: '', authPassword: '', authPhone: '', authBusy: false, authError: '', authRememberMe: true, checkoutMethod: 'UPI', adminQuery: '',
   vendorStage: 'Created', bookingDraft: initialState.booking,
   update: patch => {
@@ -81,6 +93,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ toast: '' });
   },
   setCheckoutOpen: checkoutOpen => set({ checkoutOpen }),
+  setSidebarCollapsed: sidebarCollapsed => set({ sidebarCollapsed }),
+  setSearchQuery: searchQuery => set({ searchQuery }),
+  setSearchOpen: searchOpen => set({ searchOpen }),
+  setOnline: online => set({ online }),
+  setNotificationOpen: notificationOpen => set({ notificationOpen }),
+  setNotificationCount: notificationCount => set({ notificationCount }),
   setAuthRole: authRole => set({ authRole }),
   setAuthName: authName => set({ authName }),
   setAuthEmail: authEmail => set({ authEmail }),

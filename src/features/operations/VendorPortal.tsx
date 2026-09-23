@@ -18,6 +18,7 @@ import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "reac
 import { io, type Socket } from "socket.io-client";
 import { API_BASE_URL } from "../../shared/lib/apiConfig";
 import { getAuthToken, getCurrentUser } from "../../features/auth/auth";
+import { FleetExpiryPanel } from './FleetExpiryPanel';
 
 const stages: OrderStatus[] = [
     "Created",
@@ -26,6 +27,19 @@ const stages: OrderStatus[] = [
     "Arrived",
     "Delivered",
 ];
+
+async function compressImage(file: File): Promise<string> {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Image processing is unavailable.');
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.78);
+}
 export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const {
         data,
@@ -45,6 +59,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const [selectedVehicleId, setSelectedVehicleId] = useState("");
     const [selectedDriverId, setSelectedDriverId] = useState("");
     const [incomingOrder, setIncomingOrder] = useState<Order | null>(null);
+    const [selectionOrder, setSelectionOrder] = useState<Order | null>(null);
     const [incomingOrderState, setIncomingOrderState] = useState<"pending" | "accepted" | "rejected">("pending");
     const [incomingBusy, setIncomingBusy] = useState(false);
     const [acceptSelectionOpen, setAcceptSelectionOpen] = useState(false);
@@ -117,8 +132,10 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             document.title = "Urban Tanker | Operations, simplified";
         };
     }, []);
+    const activeAssignedOrder = vendorOrders.find(item => ['Accepted', 'Vendor accepted', 'En route', 'Arrived'].includes(item.status));
     const toggleAvailability = async () => {
         if (availabilityBusy) return;
+        if (available && activeAssignedOrder) { onNotify(`You cannot go offline while order ${activeAssignedOrder.id} is active.`); return; }
         const next = !available;
         setAvailabilityBusy(true);
         try {
@@ -149,16 +166,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     const advance = async () => {
         if (!order) return;
         if (stage === "Created" || stage === "Pending acceptance" || stage === "Vendor assigned") {
-            setOperationBusy(true);
-            try {
-                if (!selectedVehicleId) { onNotify("Select an active fleet vehicle before accepting the order."); setOperationBusy(false); return; }
-                if (!selectedDriverId) { onNotify("Select an active driver before accepting the order."); setOperationBusy(false); return; }
-                const accepted = { ...order, status: "Accepted" as OrderStatus, vendorDecision: "accepted" as const };
-                await updateVendorOrder(accepted, { action: "accept", vehicleId: selectedVehicleId, driverId: selectedDriverId });
-                setStage("Accepted");
-                setVendorOrders(current => current.map(item => item.id === order.id ? accepted : item));
-                onNotify("Order accepted. Customer tracking is now active.");
-            } catch { onNotify("Unable to accept this order."); } finally { setOperationBusy(false); }
+            openStageAcceptSelection();
             return;
         }
         if (stage === "Arrived") {
@@ -217,18 +225,30 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         setAcceptDriverId(nextDriverId);
         setAcceptSelectionOpen(true);
     };
+    const openStageAcceptSelection = () => {
+        if (!order || operationBusy) return;
+        const preferredVehicle = vehicles.find(item => item.active && item.driverActive) ?? vehicles.find(item => item.active) ?? vehicles[0];
+        setSelectionOrder(order);
+        setAcceptVehicleId(preferredVehicle?.id || selectedVehicleId || "");
+        setAcceptDriverId(preferredVehicle?.driverId || selectedDriverId || "");
+        setAcceptSelectionOpen(true);
+    };
     const acceptIncomingOrder = async () => {
-        if (!incomingOrder || incomingBusy) return;
+        const targetOrder = incomingOrder || selectionOrder;
+        if (!targetOrder || incomingBusy) return;
         const vehicleId = acceptVehicleId || selectedVehicleId;
         const driverId = acceptDriverId || selectedDriverId;
         if (!vehicleId || !driverId) { onNotify("Select an active vehicle and driver before accepting the order."); return; }
         setIncomingBusy(true);
         try {
-            await updateVendorOrder({ ...incomingOrder, status: "Accepted", vendorDecision: "accepted" }, { action: "accept", vehicleId, driverId });
+            await updateVendorOrder({ ...targetOrder, status: "Accepted", vendorDecision: "accepted" }, { action: "accept", vehicleId, driverId });
             setSelectedVehicleId(vehicleId);
             setSelectedDriverId(driverId);
+            setStage("Accepted");
+            setVendorOrders(current => current.map(item => item.id === targetOrder.id ? { ...item, status: "Accepted" as OrderStatus, vendorDecision: "accepted" } : item));
             setAcceptSelectionOpen(false);
             setIncomingOrder(null);
+            setSelectionOrder(null);
             setIncomingOrderState("pending");
             document.title = "Urban Tanker | Operations, simplified";
             onNotify("Order accepted. Customer tracking is now active.");
@@ -263,8 +283,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     if (view !== "overview") {
         const activeOrder = vendorOrders.find(item => item.status !== "Delivered");
         if (view === "orders") return <VendorOrdersView orders={vendorOrders} />;
-        if (view === "track") return <VendorTrackingView order={activeOrder} />;
-        if (view === "fleet") return <VehicleFleetView vehicles={vehicles} setVehicles={setVehicles} onNotify={onNotify} />;
+        if (view === "track") return <VendorTrackingView order={activeOrder} orders={vendorOrders} />;
+        if (view === "fleet") return <><FleetExpiryPanel onNotify={onNotify} /><VehicleFleetView vehicles={vehicles} setVehicles={setVehicles} onNotify={onNotify} /></>;
         if (view === "maintenance") return <VendorMaintenanceView vehicles={vehicles} onNotify={onNotify} />;
         if (view === "attendance") return <VendorAttendanceView vehicles={vehicles} onNotify={onNotify} />;
         if (view === "payouts") return <VendorPayoutsView onNotify={onNotify} />;
@@ -273,14 +293,14 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
     }
     return (
         <>
-            {acceptSelectionOpen && incomingOrder && (
+            {acceptSelectionOpen && (incomingOrder || selectionOrder) && (
                 <AcceptOrderSelectionModal
                     vehicles={vehicles}
                     selectedVehicleId={acceptVehicleId}
                     selectedDriverId={acceptDriverId}
                     onVehicleChange={setAcceptVehicleId}
                     onDriverChange={setAcceptDriverId}
-                    onCancel={() => setAcceptSelectionOpen(false)}
+                    onCancel={() => { setAcceptSelectionOpen(false); setSelectionOrder(null); }}
                     onConfirm={() => void acceptIncomingOrder()}
                     busy={incomingBusy}
                 />
@@ -293,8 +313,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                 copy="Accept new bookings quickly, keep the customer updated, and complete delivery with their OTP."
                 action={
                     <div className="heading-actions">
-                        <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy}>
-                            {availabilityBusy ? "Updating..." : available ? "Active for bookings" : "Inactive for bookings"}
+                        <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy || Boolean(available && activeAssignedOrder)}>
+                            {availabilityBusy ? "Updating..." : available && activeAssignedOrder ? "Active delivery in progress" : available ? "Active for bookings" : "Inactive for bookings"}
                         </Button>
                         <Button variant="quiet" icon={Navigation} onClick={() => void shareLocation()} disabled={operationBusy}>Share location</Button>
                     </div>
@@ -425,7 +445,7 @@ function CustomerContactModal({ order, onClose }: { order: Order; onClose: () =>
 function VendorMaintenanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; onNotify: (message: string) => void }) {
     const [records, setRecords] = useState<Array<Record<string, unknown>>>([]);
     const [form, setForm] = useState({ vehicleId: vehicles[0]?.id || '', scheduledAt: '', description: '', cost: '0' });
-    useEffect(() => { void loadVendorMaintenance().then(setRecords).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load maintenance records.')); }, []);
+    useEffect(() => { void loadVendorMaintenance().then(setRecords).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load maintenance records.')); }, [onNotify]);
     const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); try { await createVendorMaintenance({ ...form, cost: Number(form.cost) || 0 }); setRecords(await loadVendorMaintenance()); onNotify('Maintenance reminder scheduled.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to schedule maintenance.'); } };
     return <><PageHeader eyebrow="Vendor workspace · Maintenance" title="Keep the fleet ready." copy="Schedule maintenance work before it interrupts customer deliveries." /><section className="data-surface"><form className="auth-form" onSubmit={submit}><div className="field-row"><label>Vehicle<select value={form.vehicleId} onChange={event => setForm({ ...form, vehicleId: event.target.value })}>{vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.registrationNumber}</option>)}</select></label><label>Scheduled date<input type="date" value={form.scheduledAt} onChange={event => setForm({ ...form, scheduledAt: event.target.value })} required /></label></div><div className="field-row"><label>Description<input value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="Service, inspection, repair" required /></label><label>Estimated cost<input type="number" min="0" value={form.cost} onChange={event => setForm({ ...form, cost: event.target.value })} /></label></div><Button variant="primary" type="submit" disabled={!vehicles.length}>Schedule maintenance</Button></form></section><section className="data-surface"><div className="section-heading"><div><span className="eyebrow">Maintenance calendar</span><h2>{records.length} records</h2></div></div>{records.length ? records.map(record => <article className="order-row" key={String(record.id)}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{String(record.description)}</b><Status>{String(record.status)}</Status></div><span>{String(record.scheduled_at)}</span><small>Estimated cost: {String(record.cost || 0)}</small></div></article>) : <div className="empty-state"><Package size={28} /><h3>No maintenance scheduled</h3></div>}</section></>;
 }
@@ -438,7 +458,7 @@ function VendorAttendanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; onN
 
 function VendorPayoutsView({ onNotify }: { onNotify: (message: string) => void }) {
     const [payouts, setPayouts] = useState<Array<Record<string, unknown>>>([]);
-    useEffect(() => { void loadVendorPayouts().then(setPayouts).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load payouts.')); }, []);
+    useEffect(() => { void loadVendorPayouts().then(setPayouts).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load payouts.')); }, [onNotify]);
     return <><PageHeader eyebrow="Vendor workspace · Payouts" title="Track your earnings." copy="Review payout periods and payment status from dispatch." /><section className="data-surface"><div className="section-heading"><div><span className="eyebrow">Payout history</span><h2>{payouts.length} payouts</h2></div></div>{payouts.length ? payouts.map(payout => <article className="order-row" key={String(payout.id)}><div className="order-service-icon"><IndianRupee size={19} /></div><div className="order-main"><div><b>{String(payout.period_start || 'Payout')}</b><Status>{String(payout.status)}</Status></div><span>{String(payout.period_end || '')}</span></div><div className="order-amount"><strong>{String(payout.amount || 0)}</strong></div></article>) : <div className="empty-state"><IndianRupee size={28} /><h3>No payouts yet</h3><p>Completed delivery earnings will appear here.</p></div>}</section></>;
 }
 
@@ -491,12 +511,12 @@ function VendorOrdersView({ orders }: { orders: AppData["orders"] }) {
     </>;
 }
 
-function VendorTrackingView({ order }: { order?: Order }) {
+function VendorTrackingView({ order, orders }: { order?: Order; orders: AppData["orders"] }) {
     return <>
         <PageHeader eyebrow="Vendor workspace · Live tracking" title="Share the journey." copy="Your latest location is visible to the customer while the active job is in progress." />
         <section className="tracking-surface">
             {order ? <><div className="section-heading"><div><span className="eyebrow">Active job</span><h2>{order.service} · {order.id}</h2><p>{order.address}</p></div><Status>{order.status}</Status></div><div className="tracking-details"><div><span>Customer</span><b>{order.customer}</b></div><div><span>Last location</span><b>{typeof order.vendorLatitude === "number" ? `${order.vendorLatitude.toFixed(4)}, ${order.vendorLongitude?.toFixed(4)}` : "Not shared yet"}</b></div><div><span>ETA</span><b>{order.eta}</b></div></div></> : <div className="empty-state"><Navigation size={28} /><h3>No active delivery</h3><p>Accept an order to start sharing your location.</p></div>}
-        </section>
+        </section>{orders.length > 1 && <section className="data-surface route-plan"><div className="section-heading"><div><span className="eyebrow">Route plan</span><h2>Suggested delivery sequence</h2></div><Status>Optimized</Status></div><ol>{orders.filter(item => item.status !== "Delivered" && item.status !== "Rejected").map((item, index) => <li key={item.id}><span>{index + 1}</span><div><b>{item.service} · {item.id}</b><small>{item.address} · {item.eta || "ETA pending"}</small></div></li>)}</ol></section>}
     </>;
 }
 
