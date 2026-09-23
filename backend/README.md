@@ -34,7 +34,7 @@ Edit `.env.local` with a newly rotated Atlas credential:
 MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-host>/?retryWrites=true&w=majority
 MONGODB_DB_NAME=urban_tanker
 JWT_SECRET=your-secret-key-change-in-production-12345
-JWT_EXPIRE=7d
+JWT_EXPIRE=24h
 PORT=5000
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173

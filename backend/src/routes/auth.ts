@@ -38,7 +38,7 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 async function createSession(user, token) {
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   await sessionsCollection.insertOne({
     token_hash: hashToken(token),
     uid: user.uid,

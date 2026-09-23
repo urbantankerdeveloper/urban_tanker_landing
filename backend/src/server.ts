@@ -287,11 +287,33 @@ app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
     if (!registrationNumber || !vehicleType) return res.status(400).json({ message: 'Registration number and vehicle type are required.' });
     const imageUrl = typeof req.body.imageUrl === 'string' && req.body.imageUrl.length <= 2_000_000 ? req.body.imageUrl : '';
     const now = new Date();
-    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, registration_expiry: req.body.registrationExpiry ? new Date(req.body.registrationExpiry) : undefined, insurance_expiry: req.body.insuranceExpiry ? new Date(req.body.insuranceExpiry) : undefined, permit_expiry: req.body.permitExpiry ? new Date(req.body.permitExpiry) : undefined, active: false, updated_at: now };
+    const parseExpiry = (value: unknown) => {
+      if (!value) return undefined;
+      const date = new Date(String(value));
+      return Number.isNaN(date.valueOf()) ? undefined : date;
+    };
+    const registrationExpiry = parseExpiry(req.body.registrationExpiry);
+    const insuranceExpiry = parseExpiry(req.body.insuranceExpiry);
+    const permitExpiry = parseExpiry(req.body.permitExpiry);
+    const vehicle = {
+      id: randomUUID(),
+      client_id: req.user.clientId,
+      vendor_uid: req.user.uid,
+      registration_number: registrationNumber,
+      vehicle_type: vehicleType,
+      capacity,
+      image_url: imageUrl,
+      ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}),
+      ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}),
+      ...(permitExpiry ? { permit_expiry: permitExpiry } : {}),
+      active: false,
+      updated_at: now,
+    };
     await vehiclesCollection.insertOne(vehicle);
     res.status(201).json({ vehicle });
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 11000) return res.status(409).json({ message: 'That vehicle registration is already registered.' });
+    console.error('Vendor vehicle creation error:', error);
     res.status(500).json({ message: 'Unable to create vehicle.' });
   }
 });
@@ -531,11 +553,56 @@ app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req,
   }
 });
 
+app.post('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const vendor = await usersCollection.findOne({ uid: req.params.vendorUid, client_id: req.user.clientId, role: 'vendor' }, { projection: { uid: 1 } });
+    if (!vendor) return res.status(404).json({ message: 'Vendor was not found.' });
+    const registrationNumber = String(req.body.registrationNumber || '').trim().toUpperCase();
+    const vehicleType = String(req.body.vehicleType || '').trim();
+    const capacity = String(req.body.capacity || '').trim();
+    if (!registrationNumber || !vehicleType) return res.status(400).json({ message: 'Registration number and vehicle type are required.' });
+    const imageUrl = typeof req.body.imageUrl === 'string' && req.body.imageUrl.length <= 2_000_000 ? req.body.imageUrl : '';
+    const parseExpiry = (value: unknown) => { if (!value) return undefined; const date = new Date(String(value)); return Number.isNaN(date.valueOf()) ? undefined : date; };
+    const registrationExpiry = parseExpiry(req.body.registrationExpiry);
+    const insuranceExpiry = parseExpiry(req.body.insuranceExpiry);
+    const permitExpiry = parseExpiry(req.body.permitExpiry);
+    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}), ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}), ...(permitExpiry ? { permit_expiry: permitExpiry } : {}), active: false, updated_at: new Date() };
+    await vehiclesCollection.insertOne(vehicle);
+    res.status(201).json({ vehicle });
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 11000) return res.status(409).json({ message: 'That vehicle registration is already registered.' });
+    console.error('Admin vehicle creation error:', error);
+    res.status(500).json({ message: 'Unable to create vehicle.' });
+  }
+});
+
+app.post('/api/admin/vendors/:vendorUid/drivers', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const vendor = await usersCollection.findOne({ uid: req.params.vendorUid, client_id: req.user.clientId, role: 'vendor' }, { projection: { uid: 1 } });
+    if (!vendor) return res.status(404).json({ message: 'Vendor was not found.' });
+    const name = String(req.body.name || '').trim();
+    const phone = String(req.body.phone || '').trim();
+    const address = String(req.body.address || '').trim();
+    const addressProof = typeof req.body.addressProof === 'string' && req.body.addressProof.length <= 3_000_000 ? req.body.addressProof : '';
+    if (!name || !address) return res.status(400).json({ message: 'Driver name and address are required.' });
+    const driver = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, name, phone, address, address_proof: addressProof, active: false, updated_at: new Date() };
+    await driversCollection.insertOne(driver);
+    res.status(201).json({ driver });
+  } catch (error) {
+    console.error('Admin driver creation error:', error);
+    res.status(500).json({ message: 'Unable to create driver.' });
+  }
+});
+
 app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
     const order = req.body && typeof req.body === 'object' ? { ...req.body } : {};
     if (!order.id || !order.service || !order.status) return res.status(400).json({ message: 'Order details are incomplete.' });
     delete order.statusHistory;
+    for (const key of Object.keys(order)) if (order[key] === null || order[key] === undefined) delete order[key];
+    if (!order.created) order.created = new Date();
     const deliveryOtp = typeof order.deliveryOtp === 'string' ? order.deliveryOtp : '';
     delete order.deliveryOtp;
     if (deliveryOtp) order.deliveryOtpHash = createHash('sha256').update(deliveryOtp).digest('hex');
@@ -712,7 +779,11 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       selectedVehicle = await vehiclesCollection.findOne({ id: req.body.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true }, { projection: { _id: 0 } });
       if (!selectedVehicle) return res.status(400).json({ message: 'Select an active vehicle before accepting the order.' });
       const selectedDriver = await driversCollection.findOne({ id: req.body.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true });
-      if (!selectedDriver || selectedDriver.id !== selectedVehicle.driver_id || selectedVehicle.driver_active !== true) return res.status(400).json({ message: 'Select an active driver assigned to the selected vehicle before accepting the order.' });
+      if (!selectedDriver) return res.status(400).json({ message: 'Select an active driver before accepting the order.' });
+      await vehiclesCollection.updateOne(
+        { id: selectedVehicle.id, client_id: req.user.clientId, vendor_uid: req.user.uid, active: true },
+        { $set: { driver_id: selectedDriver.id, driver_name: selectedDriver.name, driver_phone: selectedDriver.phone, driver_active: selectedDriver.active, updated_at: new Date() } },
+      );
       update.status = 'Accepted';
       update.vendorDecision = 'accepted';
       update.vendorAcceptedAt = new Date();
@@ -724,10 +795,10 @@ app.patch('/api/vendor/orders/:orderId', authenticateToken, async (req, res) => 
       update.vehicleRegistrationNumber = selectedVehicle.registration_number;
       update.vehicleType = selectedVehicle.vehicle_type;
       update.vehicleCapacity = selectedVehicle.capacity;
-      update.driverId = selectedVehicle.driver_id;
-      update.driver = selectedVehicle.driver_name;
-      update.driverPhone = selectedVehicle.driver_phone;
-      update.driverActive = selectedVehicle.driver_active;
+      update.driverId = selectedDriver.id;
+      update.driver = selectedDriver.name;
+      update.driverPhone = selectedDriver.phone;
+      update.driverActive = selectedDriver.active;
       const customerDeliveryOtp = String(randomInt(100000, 1000000));
       update.customerDeliveryOtp = customerDeliveryOtp;
       update.deliveryOtpHash = createHash('sha256').update(customerDeliveryOtp).digest('hex');
