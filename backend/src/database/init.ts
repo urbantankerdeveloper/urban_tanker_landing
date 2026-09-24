@@ -1,5 +1,7 @@
 import { getDatabase } from './connection.js';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 const collections = {
   users: {
@@ -269,13 +271,6 @@ const collections = {
   },
 };
 
-const migratedCoupons = [
-  { code: 'ECRFIRST50', discount: 50, firstBooking: true, label: '50% off your first water tanker booking', service: 'Water tanker' },
-  { code: 'WATER200', discount: 200, label: '₹200 off water tanker bookings', service: 'Water tanker' },
-  { code: 'SEWAGE300', discount: 300, label: '₹300 off sewage pickup', service: 'Sewage pickup' },
-  { code: 'WEEKEND15', discount: 15, label: '15% off weekend bookings' },
-];
-
 async function ensureCollection(db, name, validator) {
   const exists = await db.listCollections({ name }, { nameOnly: true }).hasNext();
   if (!exists) {
@@ -290,6 +285,32 @@ async function ensureCollection(db, name, validator) {
   });
 }
 
+async function loadConfiguredContent(db) {
+  const defaultPath = process.cwd().endsWith('backend')
+    ? resolve(process.cwd(), 'content.config.json')
+    : resolve(process.cwd(), 'backend', 'content.config.json');
+  const configuredPath = process.env.CONTENT_CONFIG_PATH || defaultPath;
+  const configuredJson = process.env.CONTENT_CONFIG_JSON;
+
+  try {
+    const content = configuredJson
+      ? JSON.parse(configuredJson)
+      : JSON.parse(await readFile(resolve(configuredPath as string), 'utf8'));
+    const clientId = content.client_id || process.env.CONTENT_CLIENT_ID || 'urban-tanker';
+    const config = content.config || content;
+    const coupons = Array.isArray(content.coupons) ? content.coupons : [];
+    await db.collection('content').updateOne(
+      { client_id: clientId },
+      { $set: { client_id: clientId, config, coupons, updated_at: new Date() } },
+      { upsert: true },
+    );
+    console.log(`Loaded configured content for client ${clientId}`);
+  } catch (error) {
+    if (!process.env.CONTENT_CONFIG_PATH && !configuredJson && error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
+    throw new Error(`Unable to load configured content: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 const initDatabase = async () => {
   try {
     const db = await getDatabase();
@@ -297,6 +318,7 @@ const initDatabase = async () => {
 
     await db.command({ ping: 1 });
     for (const [name, validator] of Object.entries(collections)) await ensureCollection(db, name, validator);
+    await loadConfiguredContent(db);
     await db.collection('users').createIndex({ client_id: 1, email: 1 }, { unique: true, name: 'client_email_unique' });
     await db.collection('users').createIndex({ client_id: 1, role: 1 }, { name: 'client_role' });
     await db.collection('users').createIndex({ created_at: -1 }, { name: 'created_at_desc' });
@@ -387,11 +409,6 @@ const initDatabase = async () => {
     await db.collection('drivers').updateMany({ approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
     await db.collection('vendors').updateMany({ approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
     await db.collection('content').createIndex({ client_id: 1 }, { unique: true, name: 'client_content_unique' });
-    await db.collection('content').updateOne(
-      { client_id: 'urban-tanker' },
-      { $setOnInsert: { client_id: 'urban-tanker', config: {}, coupons: migratedCoupons, updated_at: new Date() } },
-      { upsert: true },
-    );
     await db.collection('sessions').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0, name: 'session_expiry' });
     await db.collection('sessions').createIndex({ token_hash: 1, client_id: 1 }, { unique: true, name: 'session_token_client' });
 
