@@ -272,7 +272,7 @@ export function AuthScreen() {
             </span>
             <strong>{content.roles[role]}</strong>
           </p>}
-          {!resetMode && <button className="google-auth-button" type="button" onClick={() => void google()} disabled={busy}>
+          {!resetMode && import.meta.env.VITE_ENABLE_GOOGLE_AUTH === 'true' && <button className="google-auth-button" type="button" onClick={() => void google()} disabled={busy}>
             <span aria-hidden="true">G</span>
             {busy ? content.googleConnecting : `${content.signIn} with Google`}
           </button>}

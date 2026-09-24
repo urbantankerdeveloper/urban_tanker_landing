@@ -191,7 +191,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   if (view === 'drivers') return <div className="admin-fleet-page"><AdminFleetDriversView mode="drivers" vendors={dashboard?.vendors || data.vendors} onNotify={notify} /><AdminFleetApprovalView mode="drivers" onNotify={notify} /></div>;
   if (view === 'coupons') return <AdminCouponsView />;
   if (view === 'track') return <AdminTrackingView orders={data.orders} vendors={data.vendors} />;
-  if (view === 'dispatch') return <DispatchBoard orders={data.orders} vendors={data.vendors} onAssign={assignOrder} onNotify={notify} />;
+  if (view === 'dispatch' && import.meta.env.VITE_ENABLE_DISPATCH_BOARD === 'true') return <DispatchBoard orders={data.orders} vendors={data.vendors} onAssign={assignOrder} onNotify={notify} />;
   if (view === 'support') return <AdminSupportRequestsView onNotify={notify} />;
   if (view === 'book') return <AdminBookingView onNotify={notify} />;
 
