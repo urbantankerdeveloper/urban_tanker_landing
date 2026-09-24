@@ -155,6 +155,18 @@ export function AuthScreen() {
     try {
       await complete(await signInWithGoogle(registering ? role : undefined));
     } catch (cause) {
+      const code = cause && typeof cause === "object" && "code" in cause ? String(cause.code) : "";
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        setRegistering(false);
+        setResetMode(false);
+        setRole("customer");
+        setName("");
+        setEmail("");
+        setPassword("");
+        setPhone("");
+        setError("");
+        return;
+      }
       const message = cause instanceof Error ? cause.message : "Unable to sign in with Google.";
       setError(message);
       notify(message);
@@ -356,7 +368,7 @@ export function AuthScreen() {
                   : content.signInBusy
                 : registering
                   ? `${content.register} ${content.roles[role]}`
-                  : `${content.signIn} ${content.roles[role]}`}
+                  : content.signIn}
             </Button>
           </form>}
           {!resetMode && <div className="auth-link-row">

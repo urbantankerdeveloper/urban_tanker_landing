@@ -109,7 +109,7 @@ router.post('/google', async (req, res) => {
       if (user.role === 'vendor') {
         await vendorsCollection.updateOne(
           { uid: user.uid, client_id: clientId },
-          { $set: { uid: user.uid, client_id: clientId, name: user.display_name, email: user.email, phone: user.phone_number, driver: user.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, updated_at: new Date() } },
+          { $set: { uid: user.uid, client_id: clientId, name: user.display_name, email: user.email, phone: user.phone_number, driver: user.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', approval_status: 'pending', available: false, updated_at: new Date() } },
           { upsert: true },
         );
       }
@@ -183,7 +183,7 @@ router.post(
       if (role === 'vendor') {
         await vendorsCollection.updateOne(
           { uid, client_id: clientId },
-          { $set: { uid, client_id: clientId, name: userData.display_name, email, phone: userData.phone_number, driver: userData.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, updated_at: new Date() } },
+          { $set: { uid, client_id: clientId, name: userData.display_name, email, phone: userData.phone_number, driver: userData.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', approval_status: 'pending', available: false, updated_at: new Date() } },
           { upsert: true },
         );
       }

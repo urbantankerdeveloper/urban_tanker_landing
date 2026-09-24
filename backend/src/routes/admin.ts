@@ -1,5 +1,22 @@
 import type { Express } from 'express';
 
+async function sendApprovalStatusEmail(input: { email?: string; name?: string; resource: string; status: 'approved' | 'rejected'; detail: string }): Promise<void> {
+  const emailKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.MAIL_FROM;
+  if (!emailKey || !emailFrom || !input.email) return;
+  const approved = input.status === 'approved';
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${emailKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: [input.email],
+      subject: `Urban Tanker ${input.resource} ${approved ? 'approved' : 'requires attention'}`,
+      html: `<p>Hello ${input.name || 'there'},</p><p>Your ${input.resource} registration has been <strong>${approved ? 'approved' : 'rejected'}</strong>.</p><p>${input.detail}</p>${approved ? '<p>You can now use it in the Urban Tanker system.</p>' : '<p>Please contact the administrator for more information.</p>'}`,
+    }),
+  });
+}
+
 export function registerAdminRoutes(app: Express, deps: any) {
   const {
     ordersCollection,
@@ -174,9 +191,9 @@ export function registerAdminRoutes(app: Express, deps: any) {
       if (await usersCollection.findOne({ email, client_id: clientId })) return res.status(409).json({ message: 'Email already registered.' });
       const now = new Date();
       const uid = deps.randomUUID();
-      const user = { _id: uid, uid, email, password_hash: await hashPassword(password), display_name: displayName, phone_number: phoneNumber || null, role, email_verified: false, phone_verified: false, status: role === 'vendor' ? 'inactive' : 'active', available: role === 'vendor' ? false : undefined, created_at: now, updated_at: now, last_login: null, client_id: clientId };
+      const user = { _id: uid, uid, email, password_hash: await hashPassword(password), display_name: displayName, phone_number: phoneNumber || null, role, email_verified: false, phone_verified: false, status: role === 'vendor' ? 'inactive' : 'active', approval_status: role === 'vendor' ? 'pending' : 'approved', available: role === 'vendor' ? false : undefined, created_at: now, updated_at: now, last_login: null, client_id: clientId };
       await usersCollection.insertOne(user);
-      if (role === 'vendor') await vendorsCollection.insertOne({ uid, client_id: clientId, name: displayName, email, phone: phoneNumber || null, driver: '', zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, rating: '', updated_at: now });
+      if (role === 'vendor') await vendorsCollection.insertOne({ uid, client_id: clientId, name: displayName, email, phone: phoneNumber || null, driver: '', zone: '', vehicle: '', capacity: '', status: 'inactive', approval_status: 'pending', available: false, rating: '', updated_at: now });
       res.status(201).json({ uid, role, name: displayName, email, phone: phoneNumber, status: user.status, available: user.available === true });
     } catch (error) {
       console.error('Admin user creation error:', error);
@@ -205,13 +222,16 @@ export function registerAdminRoutes(app: Express, deps: any) {
       const active = req.body.active === true;
       const status = active ? 'active' : 'inactive';
       const filter = { uid: req.params.vendorUid, client_id: req.user.clientId };
+      const account = await usersCollection.findOne({ ...filter, role: 'vendor' }, { projection: { email: 1, display_name: 1, approval_status: 1 } });
       if (!active) {
         const activeOrder = await ordersCollection.findOne({ client_id: req.user.clientId, assigned_vendor_uid: req.params.vendorUid, status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] } }, { projection: { _id: 0, id: 1 } });
         if (activeOrder) return res.status(409).json({ message: `Vendor cannot be set inactive while order ${activeOrder.id} is active.` });
       }
       const vendorResult = await vendorsCollection.updateOne(filter, { $set: { status, available: active, updated_at: new Date() } });
       if (!vendorResult.matchedCount) return res.status(404).json({ message: 'Vendor was not found.' });
+      if (active) await vendorsCollection.updateOne(filter, { $set: { approval_status: 'approved' } });
       await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, ...(active ? { approval_status: 'approved' } : {}), updated_at: new Date() } });
+      if (active && account?.approval_status !== 'approved') await sendApprovalStatusEmail({ email: account?.email, name: account?.display_name, resource: 'vendor account', status: 'approved', detail: 'Your vendor registration has been verified by the administrator.' }).catch(error => console.error('Vendor approval email error:', error));
       res.json({ uid: req.params.vendorUid, status, available: active });
     } catch (error) {
       console.error('Admin vendor status error:', error);
@@ -226,7 +246,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
       usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
     ]);
     const vendorMap = new Map(vendors.map((vendor: any) => [vendor.uid, vendor.name]));
-    res.json({ vehicles: vehicles.map((vehicle: any) => ({ id: vehicle.id, registration_number: vehicle.registration_number, vehicle_type: vehicle.vehicle_type, capacity: vehicle.capacity, active: vehicle.active, vendor_uid: vehicle.vendor_uid, vendor_name: vendorMap.get(vehicle.vendor_uid) || 'Unknown vendor', image_url: vehicle.image_url })) });
+    res.json({ vehicles: vehicles.map((vehicle: any) => ({ id: vehicle.id, registration_number: vehicle.registration_number, vehicle_type: vehicle.vehicle_type, capacity: vehicle.capacity, active: vehicle.active, approval_status: vehicle.approval_status || (vehicle.active ? 'approved' : 'pending'), vendor_uid: vehicle.vendor_uid, vendor_name: vendorMap.get(vehicle.vendor_uid) || 'Unknown vendor', image_url: vehicle.image_url })) });
   });
 
   app.get('/api/admin/drivers', deps.authenticateToken, async (req: any, res: any) => {
@@ -236,7 +256,31 @@ export function registerAdminRoutes(app: Express, deps: any) {
       usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
     ]);
     const vendorMap = new Map(vendors.map((vendor: any) => [vendor.uid, vendor.name]));
-    res.json({ drivers: drivers.map((driver: any) => ({ id: driver.id, name: driver.name, phone: driver.phone, active: driver.active, vendor_uid: driver.vendor_uid, vendor_name: vendorMap.get(driver.vendor_uid) || 'Unknown vendor', address: driver.address, address_proof: driver.address_proof })) });
+    res.json({ drivers: drivers.map((driver: any) => ({ id: driver.id, name: driver.name, phone: driver.phone, active: driver.active, approval_status: driver.approval_status || (driver.active ? 'approved' : 'pending'), vendor_uid: driver.vendor_uid, vendor_name: vendorMap.get(driver.vendor_uid) || 'Unknown vendor', address: driver.address, address_proof: driver.address_proof })) });
+  });
+
+  app.patch('/api/admin/vehicles/:vehicleId/approval', deps.authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const approved = req.body.approved === true;
+    const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId }, { projection: { vendor_uid: 1, registration_number: 1, vehicle_type: 1 } });
+    if (!vehicle) return res.status(404).json({ message: 'Vehicle was not found.' });
+    const vendor = await usersCollection.findOne({ uid: vehicle.vendor_uid, client_id: req.user.clientId, role: 'vendor' }, { projection: { email: 1, display_name: 1 } });
+    const result = await vehiclesCollection.updateOne({ id: req.params.vehicleId, client_id: req.user.clientId }, { $set: { approval_status: approved ? 'approved' : 'rejected', active: approved, updated_at: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ message: 'Vehicle was not found.' });
+    await sendApprovalStatusEmail({ email: vendor?.email, name: vendor?.display_name, resource: 'vehicle', status: approved ? 'approved' : 'rejected', detail: `${vehicle.registration_number} · ${vehicle.vehicle_type}` }).catch(error => console.error('Vehicle approval email error:', error));
+    res.json({ id: req.params.vehicleId, approved, active: approved, approvalStatus: approved ? 'approved' : 'rejected' });
+  });
+
+  app.patch('/api/admin/drivers/:driverId/approval', deps.authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const approved = req.body.approved === true;
+    const driver = await driversCollection.findOne({ id: req.params.driverId, client_id: req.user.clientId }, { projection: { vendor_uid: 1, name: 1, phone: 1 } });
+    if (!driver) return res.status(404).json({ message: 'Driver was not found.' });
+    const vendor = await usersCollection.findOne({ uid: driver.vendor_uid, client_id: req.user.clientId, role: 'vendor' }, { projection: { email: 1, display_name: 1 } });
+    const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId }, { $set: { approval_status: approved ? 'approved' : 'rejected', active: approved, updated_at: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ message: 'Driver was not found.' });
+    await sendApprovalStatusEmail({ email: vendor?.email, name: vendor?.display_name, resource: 'driver', status: approved ? 'approved' : 'rejected', detail: `${driver.name} · ${driver.phone || 'No phone number'}` }).catch(error => console.error('Driver approval email error:', error));
+    res.json({ id: req.params.driverId, approved, active: approved, approvalStatus: approved ? 'approved' : 'rejected' });
   });
 
   app.get('/api/admin/vendors/:vendorUid/vehicles', deps.authenticateToken, async (req: any, res: any) => {
@@ -269,7 +313,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
       const registrationExpiry = parseExpiry(req.body.registrationExpiry);
       const insuranceExpiry = parseExpiry(req.body.insuranceExpiry);
       const permitExpiry = parseExpiry(req.body.permitExpiry);
-      const vehicle = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}), ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}), ...(permitExpiry ? { permit_expiry: permitExpiry } : {}), active: false, updated_at: new Date() };
+      const vehicle = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}), ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}), ...(permitExpiry ? { permit_expiry: permitExpiry } : {}), active: false, approval_status: 'pending', updated_at: new Date() };
       await vehiclesCollection.insertOne(vehicle);
       res.status(201).json({ vehicle });
     } catch (error) {
@@ -289,7 +333,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
       const address = String(req.body.address || '').trim();
       const addressProof = typeof req.body.addressProof === 'string' && req.body.addressProof.length <= 3_000_000 ? req.body.addressProof : '';
       if (!name || !address) return res.status(400).json({ message: 'Driver name and address are required.' });
-      const driver = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, name, phone, address, address_proof: addressProof, active: false, updated_at: new Date() };
+      const driver = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, name, phone, address, address_proof: addressProof, active: false, approval_status: 'pending', updated_at: new Date() };
       await driversCollection.insertOne(driver);
       res.status(201).json({ driver });
     } catch (error) {

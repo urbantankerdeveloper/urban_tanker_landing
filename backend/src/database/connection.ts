@@ -42,6 +42,7 @@ export const attendanceCollection = (await databasePromise).collection<any>('dri
 export const payoutsCollection = (await databasePromise).collection<any>('payouts');
 export const subscriptionsCollection = (await databasePromise).collection<any>('subscriptions');
 export const invoicesCollection = (await databasePromise).collection<any>('invoices');
+export const supportRequestsCollection = (await databasePromise).collection<any>('support_requests');
 
 export async function closeConnection() {
   await client.close();

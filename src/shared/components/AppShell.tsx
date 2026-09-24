@@ -1,7 +1,7 @@
-import { Bell, CalendarCheck, ChevronDown, ClipboardList, Droplets, Headphones, LayoutDashboard, MapPin, Menu, PanelLeft, PanelLeftClose, Percent, Search, Settings2, ShieldCheck, Store, Truck, Users, WalletCards, Wrench, type LucideIcon } from 'lucide-react';
+import { Bell, CalendarCheck, ChevronDown, ClipboardList, Droplets, Headphones, LayoutDashboard, MapPin, Menu, PanelLeft, PanelLeftClose, Percent, Search, Settings2, Store, Truck, Users, WalletCards, Wrench, type LucideIcon } from 'lucide-react';
 import { UserBadge } from './ui';
 import { useContent } from '../hooks/useContent';
-import { loadNotifications, markNotificationsRead, type NotificationItem } from '../lib/cloudStore';
+import { loadNotifications, loadSupportRequests, markNotificationsRead, type NotificationItem } from '../lib/cloudStore';
 import type { Workspace } from '../lib/types';
 import { useAppStore } from '../../app/store';
 import { useEffect, useRef, useState } from 'react';
@@ -31,8 +31,9 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
   const setNotificationOpen = useAppStore(state => state.setNotificationOpen);
   const setNotificationCount = useAppStore(state => state.setNotificationCount);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [supportCount, setSupportCount] = useState(0);
   const notificationTimer = useRef<number | undefined>(undefined);
-  const refreshNotifications = () => loadNotifications().then(result => { setNotificationCount(result.unreadCount); setNotifications([...result.notifications].sort((first, second) => new Date(second.timestamp || 0).getTime() - new Date(first.timestamp || 0).getTime())); }).catch(() => undefined);
+  const refreshNotifications = () => Promise.all([loadNotifications(), role === 'admin' ? loadSupportRequests() : Promise.resolve([])]).then(([result, requests]) => { setNotificationCount(result.unreadCount); setNotifications([...result.notifications].sort((first, second) => new Date(second.timestamp || 0).getTime() - new Date(first.timestamp || 0).getTime())); setSupportCount(requests.filter(request => request.status !== 'resolved').length); }).catch(() => undefined);
   const closeNotifications = () => {
     if (notificationTimer.current) window.clearTimeout(notificationTimer.current);
     notificationTimer.current = undefined;
@@ -80,7 +81,7 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
     ...data.orders.filter(order => `${order.id} ${order.customer} ${order.address} ${order.service}`.toLowerCase().includes(normalizedSearch)).slice(0, 6).map(order => ({ id: order.id, label: order.id, detail: `${order.service} · ${order.customer}`, workspace: order.status === 'Delivered' ? 'orders' : 'track' as Workspace })),
     ...data.vendors.filter(vendor => `${vendor.name} ${vendor.email} ${vendor.zone}`.toLowerCase().includes(normalizedSearch)).slice(0, 4).map(vendor => ({ id: vendor.uid || vendor.email || vendor.name, label: vendor.name, detail: `${vendor.zone || 'Vendor'} · ${vendor.status}`, workspace: 'vendors' as Workspace })),
   ] : [];
-  const navItems = [["overview", content.operations.overview, LayoutDashboard], ["book", content.operations.bookTanker, Truck], ["orders", content.operations.orders, ClipboardList], ["track", content.operations.liveTracking, MapPin], ...(role === 'customer' ? [["subscriptions", 'Subscriptions', CalendarCheck], ["invoices", 'Invoices & payments', WalletCards]] : []), ...(role === 'vendor' ? [["fleet", 'Fleet', Truck], ["drivers", 'Drivers', Users], ["maintenance", 'Maintenance', Wrench], ["attendance", 'Attendance', CalendarCheck], ["payouts", 'Payouts', WalletCards]] : []), ...(role === 'admin' ? [["dispatch", 'Dispatch board', ClipboardList], ["customers", 'Customers', Users], ["vendors", 'Vendors', Store], ["fleet", 'Fleet', Truck], ["drivers", 'Drivers', Users], ["coupons", 'Coupons', Percent]] : []), ["support", content.operations.helpSupport, Headphones]] as Array<[Workspace, string, LucideIcon]>;
+  const navItems = [["overview", content.operations.overview, LayoutDashboard], ...(role === 'customer' ? [["book", content.operations.bookTanker, Truck]] : []), ["orders", content.operations.orders, ClipboardList], ["track", content.operations.liveTracking, MapPin], ...(role === 'customer' ? [["subscriptions", 'Subscriptions', CalendarCheck], ["invoices", 'Invoices & payments', WalletCards]] : []), ...(role === 'vendor' ? [["fleet", 'Fleet', Truck], ["drivers", 'Drivers', Users], ["maintenance", 'Maintenance', Wrench], ["attendance", 'Attendance', CalendarCheck], ["payouts", 'Payouts', WalletCards]] : []), ...(role === 'admin' ? [["dispatch", 'Dispatch board', ClipboardList], ["customers", 'Customers', Users], ["vendors", 'Vendors', Store], ["fleet", 'Fleet', Truck], ["drivers", 'Drivers', Users], ["coupons", 'Coupons', Percent]] : []), ["support", content.operations.helpSupport, Headphones]] as Array<[Workspace, string, LucideIcon]>;
   return <div className={`app role-${role} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
     <header className="topbar">
       <button className="mobile-menu" onClick={onToggleMobileNav} aria-label={content.operations.openNavigation}><Menu size={20} /></button>
@@ -93,8 +94,8 @@ export function AppShell({ role, active, orderCount = 0, mobileNav, onNavigate, 
     <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
       <button className="sidebar-toggle" type="button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-pressed={sidebarCollapsed} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>{sidebarCollapsed ? <PanelLeft size={17} /> : <PanelLeftClose size={17} />}</button>
       <div className="sidebar-role"><span className="eyebrow">{content.operations.workspaceLabel}</span><strong>{role === 'customer' ? content.operations.customerView : role === 'vendor' ? content.operations.vendorPortal : content.operations.adminCommandCentre}</strong></div>
-      <nav>{navItems.map(([id, label, Icon]) => <button className={active === id ? 'active' : ''} key={id} onClick={() => onNavigate(id)}><Icon className="nav-icon" size={17} aria-hidden="true" /><span>{label}</span>{id === 'orders' && orderCount > 0 && <b>{orderCount}</b>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="secure-note"><ShieldCheck size={16} /><span><b>{content.operations.trustedTitle}</b><small>{content.operations.trustedDescription}</small></span></div><button onClick={() => onNotify(`${content.operations.settings} panel is available in the operations workspace`)}><Settings2 size={17} /> {content.operations.settings}</button></div>
+      <nav>{navItems.map(([id, label, Icon]) => <button className={active === id ? 'active' : ''} key={id} onClick={() => onNavigate(id)}><Icon className="nav-icon" size={17} aria-hidden="true" /><span>{label}</span>{id === 'orders' && orderCount > 0 && <b>{orderCount}</b>}{id === 'support' && role === 'admin' && supportCount > 0 && <b>{supportCount}</b>}</button>)}</nav>
+      <div className="sidebar-bottom"><button onClick={() => onNotify(`${content.operations.settings} panel is available in the operations workspace`)}><Settings2 size={17} /> {content.operations.settings}</button></div>
     </aside>
     <main className="main-content">{children}</main>
   </div>;

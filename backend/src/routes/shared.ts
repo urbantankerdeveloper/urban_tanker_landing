@@ -2,7 +2,38 @@ import type { Express } from 'express';
 import Razorpay from 'razorpay';
 
 export function registerSharedRoutes(app: Express, deps: any) {
-  const { notificationsCollection, contentCollection, contentCache, ordersCollection, invoicesCollection, subscriptionsCollection, usersCollection, razorpay, authenticateToken, recordNotification, captureError } = deps;
+  const { notificationsCollection, contentCollection, contentCache, ordersCollection, invoicesCollection, subscriptionsCollection, supportRequestsCollection, usersCollection, razorpay, authenticateToken, recordNotification, captureError } = deps;
+
+  app.post('/api/support/requests', authenticateToken, async (req: any, res: any) => {
+    try {
+      if (!['customer', 'vendor'].includes(req.user.role)) return res.status(403).json({ message: 'Customer or vendor access is required.' });
+      const message = String(req.body.message || '').trim();
+      if (!message) return res.status(400).json({ message: 'A support message is required.' });
+      const request = { id: deps.randomUUID(), client_id: req.user.clientId, requester_uid: req.user.uid, requester_role: req.user.role, requester_name: req.user.displayName || req.user.email || 'User', subject: String(req.body.subject || 'Support request').trim().slice(0, 160), ...(req.body.orderId ? { order_id: String(req.body.orderId).trim() } : {}), message: message.slice(0, 5000), status: 'open', created_at: new Date(), updated_at: new Date() };
+      await supportRequestsCollection.insertOne(request);
+      await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: request.order_id, type: 'support-request', title: 'New support request', detail: `${request.requester_name} · ${request.subject}` });
+      res.status(201).json({ request });
+    } catch (error) {
+      console.error('Support request creation error:', error);
+      res.status(500).json({ message: 'Unable to create support request.' });
+    }
+  });
+
+  app.get('/api/support/requests', authenticateToken, async (req: any, res: any) => {
+    if (!['admin', 'customer', 'vendor'].includes(req.user.role)) return res.status(403).json({ message: 'Access is required.' });
+    const filter = req.user.role === 'admin' ? { client_id: req.user.clientId } : { client_id: req.user.clientId, requester_uid: req.user.uid };
+    const requests = await supportRequestsCollection.find(filter, { projection: { _id: 0 } }).sort({ updated_at: -1 }).limit(100).toArray();
+    res.json({ requests });
+  });
+
+  app.patch('/api/support/requests/:requestId', authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const status = ['open', 'in-progress', 'resolved'].includes(req.body.status) ? req.body.status : 'in-progress';
+    const resolution = String(req.body.resolution || '').trim().slice(0, 5000);
+    const result = await supportRequestsCollection.updateOne({ id: req.params.requestId, client_id: req.user.clientId }, { $set: { status, ...(resolution ? { resolution } : {}), updated_at: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ message: 'Support request was not found.' });
+    res.json({ id: req.params.requestId, status, resolution });
+  });
 
   app.get('/api/notifications', authenticateToken, async (req: any, res: any) => {
     try {

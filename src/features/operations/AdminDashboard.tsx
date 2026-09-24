@@ -12,11 +12,13 @@ import { io } from 'socket.io-client';
 import { API_BASE_URL } from '../../shared/lib/apiConfig';
 import { getAuthToken } from '../../features/auth/auth';
 import { DispatchBoard } from './DispatchBoard';
+import { AdminFleetApprovalView } from './AdminFleetApprovalView';
+import { AdminSupportRequestsView } from './AdminSupportRequestsView';
 
 const buildCsvReport = (headers: string[], rows: Array<Array<string | number | undefined>>) =>
   [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
 
-type DeliveryNotification = { id: string; orderId: string; vendorName: string };
+type DeliveryNotification = { id: string; orderId: string; vendorName?: string; kind: 'delivered' | 'unaccepted'; service?: string; waitingMinutes?: number };
 
 function AdminViewSkeleton({ title = 'Loading dashboard data...' }: { title?: string }) {
   return <div className="admin-skeleton-page" aria-busy="true" aria-live="polite" aria-label={title}><div className="skeleton-heading admin-skeleton-heading" /><div className="skeleton-copy admin-skeleton-copy" /><div className="admin-skeleton-list">{Array.from({ length: 4 }).map((_, index) => <div className="admin-skeleton-card" key={index}><div className="admin-skeleton-icon" /><div className="admin-skeleton-body"><div className="admin-skeleton-line admin-skeleton-line-lg" /><div className="admin-skeleton-line admin-skeleton-line-md" /><div className="admin-skeleton-line admin-skeleton-line-sm" /></div></div>)}</div></div>;
@@ -33,21 +35,27 @@ export function AdminDeliveryNotifications() {
     if (!token) return undefined;
     const socket = io(API_BASE_URL, { auth: { token }, transports: ['websocket', 'polling'] });
     const handleDelivered = (event: { orderId: string; vendorName: string }) => {
-      const notification = { ...event, id: `${event.orderId}-${Date.now()}` };
+      const notification = { ...event, id: `${event.orderId}-${Date.now()}`, kind: 'delivered' as const };
+      setNotifications(current => [notification, ...current].slice(0, 6));
+      window.setTimeout(() => setNotifications(current => current.filter(item => item.id !== notification.id)), 15_000);
+    };
+    const handleUnaccepted = (event: { orderId: string; service?: string; waitingMinutes: number }) => {
+      const notification = { ...event, id: `${event.orderId}-unaccepted-${Date.now()}`, kind: 'unaccepted' as const };
       setNotifications(current => [notification, ...current].slice(0, 6));
       window.setTimeout(() => setNotifications(current => current.filter(item => item.id !== notification.id)), 15_000);
     };
     socket.on('order:delivered', handleDelivered);
+    socket.on('order:unaccepted-alert', handleUnaccepted);
     return () => { socket.disconnect(); };
   }, []);
   const dismiss = (id: string) => setNotifications(current => current.filter(item => item.id !== id));
-  return <div className="admin-delivery-notifications" aria-live="polite">{notifications.map(notification => <aside className="admin-delivery-notification" key={notification.id} role="status"><button className="admin-delivery-notification-close" type="button" onClick={() => dismiss(notification.id)} aria-label="Close delivery notification"><X size={17} /></button><span className="eyebrow">Delivery update</span><h3>Order delivered</h3><p><b className="mono">{notification.orderId}</b> was delivered by <strong>{notification.vendorName}</strong>.</p><Button variant="primary" onClick={() => dismiss(notification.id)}>OK</Button></aside>)}</div>;
+  return <div className="admin-delivery-notifications" aria-live="polite">{notifications.map(notification => <aside className="admin-delivery-notification" key={notification.id} role="status"><button className="admin-delivery-notification-close" type="button" onClick={() => dismiss(notification.id)} aria-label="Close delivery notification"><X size={17} /></button><span className="eyebrow">{notification.kind === 'unaccepted' ? 'Dispatch alert' : 'Delivery update'}</span><h3>{notification.kind === 'unaccepted' ? 'Order needs vendor attention' : 'Order delivered'}</h3><p><b className="mono">{notification.orderId}</b>{notification.kind === 'unaccepted' ? ` has been waiting ${notification.waitingMinutes} minutes without vendor acceptance.` : <> was delivered by <strong>{notification.vendorName}</strong>.</>}</p><Button variant="primary" onClick={() => dismiss(notification.id)}>OK</Button></aside>)}</div>;
 }
 
 export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const { data, adminQuery, setAdminQuery, notify, update } = useAppStore();
   const [bookingOpen, setBookingOpen] = useState(false);
-  const [booking, setBooking] = useState({ service: 'Water tanker', capacity: '6 KL', customer: '', address: '', amount: '0' });
+  const [booking, setBooking] = useState({ service: 'Water tanker', capacity: '6 KL', date: new Date().toISOString().slice(0, 10), customer: '', address: '', amount: '0' });
   const [dashboard, setDashboard] = useState<AdminDashboardData | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [ordersPage, setOrdersPage] = useState(1);
@@ -56,6 +64,7 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const [orderHistory, setOrderHistory] = useState<OrderHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [chartPeriod, setChartPeriod] = useState<7 | 30 | 90>(7);
   const refreshDashboard = async (showMessage = false) => {
     setRefreshing(true);
     setInitialLoading(true);
@@ -82,7 +91,22 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   const pagedOrders = filteredOrders.slice((ordersPage - 1) * 10, ordersPage * 10);
   const revenue = dashboard?.revenue ?? data.orders.filter(order => order.status === 'Delivered').reduce((total, order) => total + order.amount, 0);
   const delivered = dashboard?.delivered ?? data.orders.filter(order => order.status === 'Delivered').length;
-  const chart = dashboard?.chart || [];
+  const chart = Array.from({ length: chartPeriod }, (_, index) => {
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() - (chartPeriod - 1 - index));
+    const nextDay = new Date(day);
+    nextDay.setDate(nextDay.getDate() + 1);
+    const dayOrders = data.orders.filter(order => {
+      const created = new Date(order.created);
+      return !Number.isNaN(created.valueOf()) && created >= day && created < nextDay;
+    });
+    return {
+      label: chartPeriod === 7 ? day.toLocaleDateString('en-IN', { weekday: 'short' }) : day.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+      water: dayOrders.filter(order => order.service === 'Water tanker').length,
+      sewage: dayOrders.filter(order => order.service === 'Sewage pickup').length,
+    };
+  });
   const liveTankers = data.orders
     .filter(order => !['Delivered', 'Rejected', 'Vendor rejected'].includes(order.status))
     .map(order => ({
@@ -126,12 +150,24 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     setNotifyingOrderId(orderId);
     try { await notifyVendorsOfOrder(orderId); notify('Order notification sent to connected vendors.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to notify vendors.'); } finally { setNotifyingOrderId(null); }
   };
+  const openOrderHistory = async (orderId: string) => {
+    setHistoryOrderId(orderId);
+    setHistoryLoading(true);
+    try { setOrderHistory(await loadAdminOrderHistory(orderId)); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to load order history.'); setHistoryOrderId(null); } finally { setHistoryLoading(false); }
+  };
   const assignOrder = async (orderId: string, vendorUid: string) => {
     if (!vendorUid) return;
     try { await assignAdminOrderToVendor(orderId, vendorUid); await refreshDashboard(); notify('Vendor assigned to the order.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to assign the vendor.'); }
   };
+  const submitAdminBooking = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const order = { id: `ORD-${Date.now().toString().slice(-8)}`, service: booking.service, capacity: booking.capacity, scheduledDate: booking.date, address: booking.address, customer: booking.customer, amount: Number(booking.amount) || 0, status: 'Created' as const, vendor: '', driver: '', eta: 'Pending assignment', payment: 'Due on delivery', created: new Date().toLocaleString('en-IN') };
+    update({ orders: [order, ...data.orders] });
+    setBookingOpen(false);
+    notify('Booking created and sent for vendor assignment.');
+  };
   if (initialLoading && !dashboard) return view === 'customers' ? <AdminCustomersSkeleton /> : <AdminViewSkeleton title="Loading admin dashboard" />;
-  if (view === 'orders') return <AdminOrdersView orders={filteredOrders} vendors={dashboard?.vendors || data.vendors} query={adminQuery} setQuery={setAdminQuery} notifyingOrderId={notifyingOrderId} onRetryNotification={retryNotification} onAssign={assignOrder} />;
+  if (view === 'orders') return <><AdminOrdersView orders={filteredOrders} vendors={dashboard?.vendors || data.vendors} query={adminQuery} setQuery={setAdminQuery} notifyingOrderId={notifyingOrderId} onRetryNotification={retryNotification} onAssign={assignOrder} onCreateBooking={() => setBookingOpen(true)} />{bookingOpen && <AdminBookingModal booking={booking} setBooking={setBooking} onClose={() => setBookingOpen(false)} onSubmit={submitAdminBooking} />}</>;
   const addAccountToDashboard = (account: Awaited<ReturnType<typeof createAdminAccount>>) => {
     if (account.role === 'vendor') {
       const vendor = { uid: account.uid, name: account.name, email: account.email, phone: account.phone, driver: '', zone: '', vehicle: '', capacity: '', status: account.status, available: account.available, rating: '' };
@@ -148,21 +184,20 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
     setDashboard(current => current ? { ...current, vendors: current.vendors.map(updateVendor) } : current);
     update({ vendors: data.vendors.map(updateVendor) });
   }} />;
-  if (view === 'fleet') return <AdminFleetDriversView mode="fleet" vendors={dashboard?.vendors || data.vendors} onNotify={notify} />;
-  if (view === 'drivers') return <AdminFleetDriversView mode="drivers" vendors={dashboard?.vendors || data.vendors} onNotify={notify} />;
+  if (view === 'fleet') return <div className="admin-fleet-page"><AdminFleetDriversView mode="fleet" vendors={dashboard?.vendors || data.vendors} onNotify={notify} /><AdminFleetApprovalView mode="fleet" onNotify={notify} /></div>;
+  if (view === 'drivers') return <div className="admin-fleet-page"><AdminFleetDriversView mode="drivers" vendors={dashboard?.vendors || data.vendors} onNotify={notify} /><AdminFleetApprovalView mode="drivers" onNotify={notify} /></div>;
   if (view === 'coupons') return <AdminCouponsView />;
   if (view === 'track') return <AdminTrackingView orders={data.orders} vendors={data.vendors} />;
   if (view === 'dispatch') return <DispatchBoard orders={data.orders} vendors={data.vendors} onAssign={assignOrder} onNotify={notify} />;
-  if (view === 'support') return <AdminSupportView onNotify={notify} />;
+  if (view === 'support') return <AdminSupportRequestsView onNotify={notify} />;
   if (view === 'book') return <AdminBookingView onNotify={notify} />;
 
   return <>
-    <PageHeader eyebrow="Network intelligence · September 2026" title="Welcome back, Admin." copy="Monitor bookings, operations, revenue, and tanker activity across Chennai." action={<div className="heading-actions"><Button variant="quiet" icon={RefreshCcw} onClick={() => void refreshDashboard(true)} disabled={refreshing}>{refreshing ? 'Refreshing...' : 'Refresh'}</Button><Button variant="primary" icon={Plus} onClick={() => setBookingOpen(true)}>Create test order</Button></div>} />
+    <PageHeader eyebrow="Network intelligence · September 2026" title="Welcome back, Admin." copy="Monitor bookings, operations, revenue, and tanker activity across Chennai." action={<div className="heading-actions"><Button variant="quiet" icon={RefreshCcw} onClick={() => void refreshDashboard(true)} disabled={refreshing}>{refreshing ? 'Refreshing...' : 'Refresh'}</Button></div>} />
     <section className="admin-kpis admin-kpis-compact" aria-label="Network performance"><StatCard icon={IndianRupee} label="Revenue this month" value={money(revenue)} detail="MongoDB orders" tone="highlight" /><StatCard icon={Check} label="Delivered" value={delivered} detail="Tenant orders" /><StatCard icon={Truck} label="Live tankers" value={dashboard?.activeDeliveries ?? 0} detail="Active deliveries" /><StatCard icon={Gauge} label="Fleet utilisation" value={`${dashboard?.activeVendors ?? 0}/${dashboard?.vendors.length ?? data.vendors.length}`} detail="Active vendors" /></section>
     <section className="admin-kpis admin-kpis-compact secondary" aria-label="Network totals"><StatCard icon={Package} label="Total orders" value={data.orders.length} detail="MongoDB orders" /><StatCard icon={Users} label="Active vendors" value={dashboard?.activeVendors ?? 0} detail="Active status" /><StatCard icon={UserRound} label="Customers" value={dashboard?.customers.length ?? 0} detail="MongoDB customers" /><StatCard icon={WalletCards} label="Platform commission" value={money(Math.round(revenue * .1))} detail="10% of revenue" /></section>
-    <div className="admin-grid"><article className="data-surface chart-surface"><div className="section-heading"><div><span className="eyebrow">Order performance · daily flow</span><h2>Water vs sewage orders</h2></div><div className="segmented" role="group" aria-label="Order period"><button className="active" type="button">7 days</button><button type="button">30 days</button><button type="button">90 days</button></div></div><div className="chart" aria-label="Bar chart showing weekly orders">{chart.map((day, index) => <div className="bar-group" key={`${day.label}-${index}`}><div className="bars"><i style={{ height: `${Math.max(day.water * 20, 3)}%` }} /><i style={{ height: `${Math.max(day.sewage * 20, 3)}%` }} /></div><small>{day.label}</small></div>)}</div><div className="chart-legend"><span><i className="water" /> Water tanker</span><span><i className="sewage" /> Sewage tanker</span><b>MongoDB order activity</b></div></article><article className="data-surface"><div className="section-heading"><div><span className="eyebrow">Fleet radar · live</span><h2>Tanker movement</h2></div><Status>{liveTankers.length ? 'Live' : 'Idle'}</Status></div><div className="radar" aria-label={`${liveTankers.length} active deliveries`}>{liveTankers.slice(0, 6).map(({ order, vendor }, index) => <button className={`radar-tanker tanker-${(index % 6) + 1}`} key={order.id} title={`View ${order.id} delivery`} aria-label={`View ${order.id} delivery`} onClick={() => setSelectedTanker({ order, vendor: vendor! })}><Truck size={13} /></button>)}<span className="radar-sweep" /><span className="radar-circle c1" /><span className="radar-circle c2" /><b>UT</b></div><div className="radar-summary"><strong>{liveTankers.length}</strong><span>live deliveries in movement</span></div></article></div>
-    <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Orders</span><h2>Booking control</h2></div><div className="table-tools"><Button variant="quiet" icon={RefreshCcw} onClick={exportOrders}>Export report</Button><label className="input-icon" htmlFor="order-search"><Search size={15} /><input id="order-search" placeholder="Search order or customer" value={adminQuery} onChange={event => { setAdminQuery(event.target.value); setOrdersPage(1); }} /></label></div></div><div className="table-scroll"><table><caption className="sr-only">Urban Tanker booking control</caption><thead><tr><th scope="col">Booking</th><th scope="col">Service</th><th scope="col">Customer</th><th scope="col">Vendor</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>{pagedOrders.map(order => <tr key={order.id}><td><b className="mono">{order.id}</b><small>{order.created}</small></td><td>{order.service}<small>{order.capacity}</small></td><td>{order.customer}<small>{order.address}</small></td><td>{order.vendor || 'Pending assignment'}<small>{order.driver || '—'}</small></td><td><b>{money(order.amount)}</b><small>{order.payment}</small></td><td><Status>{order.status}</Status></td><td>{['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'].includes(order.status) && !order.vendor ? <Button variant="quiet" icon={RefreshCcw} onClick={() => void retryNotification(order.id)} disabled={notifyingOrderId === order.id}>{notifyingOrderId === order.id ? 'Sending...' : order.status === 'Rejected' ? 'Re-initiate vendors' : 'Notify vendors'}</Button> : '—'}</td></tr>)}</tbody></table></div><Pagination page={ordersPage} pageSize={10} total={filteredOrders.length} onPageChange={setOrdersPage} /></article>
-    {bookingOpen && <AdminBookingModal booking={booking} setBooking={setBooking} onClose={() => setBookingOpen(false)} onSubmit={(event) => { event.preventDefault(); const order = { id: `ORD-${Date.now().toString().slice(-8)}`, service: booking.service, capacity: booking.capacity, address: booking.address, customer: booking.customer, amount: Number(booking.amount) || 0, status: 'Created' as const, vendor: '', driver: '', eta: 'Pending assignment', payment: 'Due on delivery', created: new Date().toLocaleString('en-IN') }; update({ orders: [order, ...data.orders] }); setBookingOpen(false); notify('Booking created and sent for vendor assignment.'); }} />}
+    <div className="admin-grid"><article className="data-surface chart-surface"><div className="section-heading"><div><span className="eyebrow">Order performance · daily flow</span><h2>Water vs sewage orders</h2></div><div className="segmented" role="group" aria-label="Order period">{([7, 30, 90] as const).map(period => <button className={chartPeriod === period ? 'active' : ''} type="button" key={period} onClick={() => setChartPeriod(period)}>{period} days</button>)}</div></div><div className="chart" aria-label={`Bar chart showing orders for the last ${chartPeriod} days`}>{chart.map((day, index) => <div className="bar-group" key={`${day.label}-${index}`}><div className="bars"><i style={{ height: `${Math.max(day.water * 20, 3)}%` }} /><i style={{ height: `${Math.max(day.sewage * 20, 3)}%` }} /></div><small>{day.label}</small></div>)}</div><div className="chart-legend"><span><i className="water" /> Water tanker</span><span><i className="sewage" /> Sewage tanker</span><b>MongoDB order activity</b></div></article><article className="data-surface"><div className="section-heading"><div><span className="eyebrow">Fleet radar · live</span><h2>Tanker movement</h2></div><Status>{liveTankers.length ? 'Live' : 'Idle'}</Status></div><div className="radar" aria-label={`${liveTankers.length} active deliveries`}>{liveTankers.slice(0, 6).map(({ order, vendor }, index) => <button className={`radar-tanker tanker-${(index % 6) + 1}`} key={order.id} title={`View ${order.id} delivery`} aria-label={`View ${order.id} delivery`} onClick={() => setSelectedTanker({ order, vendor: vendor! })}><Truck size={13} /></button>)}<span className="radar-sweep" /><span className="radar-circle c1" /><span className="radar-circle c2" /><b>UT</b></div><div className="radar-summary"><strong>{liveTankers.length}</strong><span>live deliveries in movement</span></div></article></div>
+    <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Orders</span><h2>Booking control</h2></div><div className="table-tools"><Button variant="quiet" icon={RefreshCcw} onClick={exportOrders}>Export report</Button><label className="input-icon" htmlFor="order-search"><Search size={15} /><input id="order-search" placeholder="Search order or customer" value={adminQuery} onChange={event => { setAdminQuery(event.target.value); setOrdersPage(1); }} /></label></div></div><div className="table-scroll"><table><caption className="sr-only">Urban Tanker booking control</caption><thead><tr><th scope="col">Booking</th><th scope="col">Service</th><th scope="col">Customer</th><th scope="col">Vendor</th><th scope="col">Amount</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>{pagedOrders.map(order => <tr key={order.id}><td><button className="order-history-link mono" type="button" onClick={() => void openOrderHistory(order.id)}>{order.id}</button><small>{order.created}</small></td><td>{order.service}<small>{order.capacity}</small></td><td>{order.customer}<small>{order.address}</small></td><td>{order.vendor || 'Pending assignment'}<small>{order.driver || '—'}</small></td><td><b>{money(order.amount)}</b><small>{order.payment}</small></td><td><Status>{order.status}</Status></td><td>{['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'].includes(order.status) && !order.vendor ? <Button variant="quiet" icon={RefreshCcw} onClick={() => void retryNotification(order.id)} disabled={notifyingOrderId === order.id}>{notifyingOrderId === order.id ? 'Sending...' : order.status === 'Rejected' ? 'Re-initiate vendors' : 'Notify vendors'}</Button> : '—'}</td></tr>)}</tbody></table></div><Pagination page={ordersPage} pageSize={10} total={filteredOrders.length} onPageChange={setOrdersPage} /></article>
     {selectedTanker && <TankerDeliveryModal order={selectedTanker.order} vendor={selectedTanker.vendor} onClose={() => setSelectedTanker(null)} />}
     {historyOrderId && <AdminOrderHistoryModal orderId={historyOrderId} history={orderHistory} loading={historyLoading} onClose={() => setHistoryOrderId(null)} />}
   </>;
@@ -248,8 +283,8 @@ function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'd
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [vehicles, setVehicles] = useState<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean; vendorName: string; vendorUid: string }>>([]);
-  const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean; vendorName: string; vendorUid: string }>>([]);
+  const [vehicles, setVehicles] = useState<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean; approvalStatus: string; vendorName: string; vendorUid: string }>>([]);
+  const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean; approvalStatus: string; vendorName: string; vendorUid: string }>>([]);
   const [vehicleForm, setVehicleForm] = useState({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
   const [driverForm, setDriverForm] = useState({ name: '', phone: '', address: '', addressProof: '' });
 
@@ -264,6 +299,7 @@ function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'd
           vehicleType: item.vehicleType,
           capacity: item.capacity,
           active: item.active,
+          approvalStatus: item.approvalStatus,
           vendorUid: item.vendorUid,
           vendorName: item.vendorName,
         })));
@@ -276,6 +312,7 @@ function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'd
         name: item.name,
         phone: item.phone,
         active: item.active,
+          approvalStatus: item.approvalStatus,
         vendorUid: item.vendorUid,
         vendorName: item.vendorName,
       })));
@@ -313,31 +350,6 @@ function AdminFleetDriversView({ mode, vendors, onNotify }: { mode: 'fleet' | 'd
   return <><PageHeader eyebrow={`Admin workspace · ${mode === 'fleet' ? 'Fleet' : 'Drivers'}`} title={mode === 'fleet' ? 'Manage vendor vehicles.' : 'Manage vendor drivers.'} copy="Review the full fleet and driver roster across every vendor." action={<Button variant="primary" icon={mode === 'fleet' ? Truck : Users} onClick={() => setOpen(true)}>{mode === 'fleet' ? 'Add vehicle' : 'Add driver'}</Button>} /><div className="order-list">{mode === 'fleet' ? vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Truck size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>{vehicle.vendorName}</small></div></article>) : <div className="empty-state"><Truck size={28} /><h3>No vehicles yet</h3><p>No vendor vehicles are registered in this tenant.</p></div> : drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>{driver.vendorName}</small></div></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>No vendor drivers are registered in this tenant.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-fleet-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close form">×</button><span className="eyebrow">{mode === 'fleet' ? 'Fleet management' : 'Driver management'}</span><h2 id="admin-fleet-dialog-title">Add {mode === 'fleet' ? 'vehicle' : 'driver'}</h2><p className="modal-copy">Select the vendor owner before creating this record.</p><form className="auth-form" onSubmit={submit} noValidate><label>Owning vendor<select value={vendorUid} onChange={event => setVendorUid(event.target.value)} required><option value="">Select a vendor</option>{vendors.map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name} · {vendor.email}</option>)}</select></label>{mode === 'fleet' ? <><label>Registration number<input value={vehicleForm.registrationNumber} onChange={event => setVehicleForm({ ...vehicleForm, registrationNumber: event.target.value.toUpperCase() })} required /></label><label>Vehicle type<select value={vehicleForm.vehicleType} onChange={event => setVehicleForm({ ...vehicleForm, vehicleType: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={vehicleForm.capacity} onChange={event => setVehicleForm({ ...vehicleForm, capacity: event.target.value })} required /></label></> : <><label>Driver name<input value={driverForm.name} onChange={event => setDriverForm({ ...driverForm, name: event.target.value })} required /></label><label>Phone number<input value={driverForm.phone} onChange={event => setDriverForm({ ...driverForm, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" required /></label><label>Driver address<textarea value={driverForm.address} onChange={event => setDriverForm({ ...driverForm, address: event.target.value })} minLength={5} required /></label></>}<div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={busy || !vendorUid}>{busy ? 'Creating...' : `Create ${mode === 'fleet' ? 'vehicle' : 'driver'}`}</Button></div></form></section></div>}</>;
 }
 
-function AdminFleetDriversForm({ mode, vendors, onNotify }: { mode: 'fleet' | 'drivers'; vendors: AppData['vendors']; onNotify: (message: string) => void }) {
-  const [vendorUid, setVendorUid] = useState('');
-  const [vehicleForm, setVehicleForm] = useState({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
-  const [driverForm, setDriverForm] = useState({ name: '', phone: '', address: '', addressProof: '' });
-  const [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!vendorUid) { onNotify('Select the vendor who owns this record.'); return; }
-    setBusy(true);
-    try {
-      if (mode === 'fleet') {
-        await createAdminVehicle(vendorUid, vehicleForm);
-        setVehicleForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
-        onNotify('Vehicle created for the selected vendor.');
-      } else {
-        await createAdminDriver(vendorUid, driverForm);
-        setDriverForm({ name: '', phone: '', address: '', addressProof: '' });
-        onNotify('Driver created for the selected vendor.');
-      }
-    } catch (error) { onNotify(error instanceof Error ? error.message : `Unable to create ${mode === 'fleet' ? 'vehicle' : 'driver'}.`); }
-    finally { setBusy(false); }
-  };
-  return <><PageHeader eyebrow={`Admin workspace · ${mode === 'fleet' ? 'Fleet' : 'Drivers'}`} title={mode === 'fleet' ? 'Create a vendor vehicle.' : 'Create a vendor driver.'} copy="Select the owning vendor before registering this operational record." /><section className="data-surface"><form className="auth-form" onSubmit={submit} noValidate><label>Owning vendor<select value={vendorUid} onChange={event => setVendorUid(event.target.value)} required><option value="">Select a vendor</option>{vendors.map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name} · {vendor.email}</option>)}</select></label>{mode === 'fleet' ? <><label>Registration number<input value={vehicleForm.registrationNumber} onChange={event => setVehicleForm({ ...vehicleForm, registrationNumber: event.target.value.toUpperCase() })} placeholder="TN 12 AB 8987" required /></label><div className="field-row"><label>Vehicle type<select value={vehicleForm.vehicleType} onChange={event => setVehicleForm({ ...vehicleForm, vehicleType: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={vehicleForm.capacity} onChange={event => setVehicleForm({ ...vehicleForm, capacity: event.target.value })} placeholder="6 KL" required /></label></div></> : <><label>Driver name<input value={driverForm.name} onChange={event => setDriverForm({ ...driverForm, name: event.target.value })} required /></label><label>Phone number<input value={driverForm.phone} onChange={event => setDriverForm({ ...driverForm, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" pattern="[6-9][0-9]{9}" required /></label><label>Driver address<textarea value={driverForm.address} onChange={event => setDriverForm({ ...driverForm, address: event.target.value })} minLength={5} rows={3} required /></label></>}<div className="heading-actions"><Button variant="primary" type="submit" disabled={busy || !vendors.length}>{busy ? 'Creating...' : `Create ${mode === 'fleet' ? 'vehicle' : 'driver'}`}</Button></div></form>{!vendors.length && <div className="empty-state"><Users size={28} /><h3>No vendors available</h3><p>Create a vendor account before registering fleet records.</p></div>}</section></>;
-}
-
 function AdminAccountModal({ role, onClose, onCreated }: { role: 'customer' | 'vendor'; onClose: () => void; onCreated: (account: Awaited<ReturnType<typeof createAdminAccount>>) => void }) {
   const [form, setForm] = useState<AdminAccountInput>({ role, displayName: '', email: '', phoneNumber: '', password: '' });
   const [busy, setBusy] = useState(false);
@@ -353,11 +365,11 @@ function AdminAccountModal({ role, onClose, onCreated }: { role: 'customer' | 'v
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal admin-account-modal" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close account form">X</button><span className="eyebrow">Account registration</span><h2 id="account-dialog-title">Register {role}.</h2><p className="modal-copy">Create a secure {role} account with the same details used during registration.</p><p className="selected-role"><span>Registering as</span><strong>{role === 'vendor' ? 'Vendor' : 'Customer'}</strong></p><div className="auth-divider"><span>Account details</span></div><form className="auth-form" onSubmit={submit} noValidate><label>Full name<input value={form.displayName} onChange={event => setForm({ ...form, displayName: event.target.value })} autoComplete="name" placeholder={role === 'vendor' ? 'Organisation or vendor name' : 'Customer full name'} required /></label><label>Mobile number<input value={form.phoneNumber} onChange={event => setForm({ ...form, phoneNumber: event.target.value.replace(/\D/g, '').slice(0, 10) })} type="tel" inputMode="numeric" autoComplete="tel" placeholder="10-digit mobile number" pattern="[6-9][0-9]{9}" required /><small>Use a valid Indian mobile number.</small></label><label>Email address<input type="email" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} autoComplete="email" placeholder="name@example.com" required /></label><label>Password<input type="password" minLength={8} value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} autoComplete="new-password" placeholder="At least 8 characters" required /><small>Password is stored securely on the server.</small></label>{error && <p className="form-error">{error}</p>}<div className="heading-actions"><Button variant="quiet" onClick={onClose}>Cancel</Button><Button variant="primary" type="submit" disabled={busy}>{busy ? 'Creating...' : `Create ${role}`}</Button></div></form></section></div>;
 }
 
-function AdminBookingModal({ booking, setBooking, onClose, onSubmit }: { booking: { service: string; capacity: string; customer: string; address: string; amount: string }; setBooking: (value: { service: string; capacity: string; customer: string; address: string; amount: string }) => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-booking-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close booking form">×</button><span className="eyebrow">Admin booking control</span><h2 id="admin-booking-title">Create a test order.</h2><p className="modal-copy">Create a booking with a pending vendor assignment.</p><form className="auth-form" onSubmit={onSubmit}><label>Service<select value={booking.service} onChange={event => setBooking({ ...booking, service: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={booking.capacity} onChange={event => setBooking({ ...booking, capacity: event.target.value })} required /></label><label>Customer name<input value={booking.customer} onChange={event => setBooking({ ...booking, customer: event.target.value })} required /></label><label>Delivery address<input value={booking.address} onChange={event => setBooking({ ...booking, address: event.target.value })} required /></label><label>Amount<input type="number" min="0" value={booking.amount} onChange={event => setBooking({ ...booking, amount: event.target.value })} required /></label><div className="heading-actions"><Button variant="quiet" onClick={onClose}>Cancel</Button><Button variant="primary" type="submit">Create booking</Button></div></form></section></div>;
+function AdminBookingModal({ booking, setBooking, onClose, onSubmit }: { booking: { service: string; capacity: string; date: string; customer: string; address: string; amount: string }; setBooking: (value: { service: string; capacity: string; date: string; customer: string; address: string; amount: string }) => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="admin-booking-title"><button className="modal-close" type="button" onClick={onClose} aria-label="Close booking form">×</button><span className="eyebrow">Admin booking control</span><h2 id="admin-booking-title">Create a test order.</h2><p className="modal-copy">Create a booking with a pending vendor assignment.</p><form className="auth-form" onSubmit={onSubmit}><label>Service<select value={booking.service} onChange={event => setBooking({ ...booking, service: event.target.value })}><option>Water tanker</option><option>Sewage pickup</option></select></label><label>Capacity<input value={booking.capacity} onChange={event => setBooking({ ...booking, capacity: event.target.value })} required /></label><label>Delivery date<input type="date" min={new Date().toISOString().slice(0, 10)} value={booking.date} onChange={event => setBooking({ ...booking, date: event.target.value })} required /></label><label>Customer name<input value={booking.customer} onChange={event => setBooking({ ...booking, customer: event.target.value })} required /></label><label>Delivery address<input value={booking.address} onChange={event => setBooking({ ...booking, address: event.target.value })} required /></label><label>Amount<input type="number" min="0" value={booking.amount} onChange={event => setBooking({ ...booking, amount: event.target.value })} required /></label><div className="heading-actions"><Button variant="quiet" onClick={onClose}>Cancel</Button><Button variant="primary" type="submit">Create booking</Button></div></form></section></div>;
 }
 
-function AdminOrdersView({ orders, vendors, query, setQuery, notifyingOrderId, onRetryNotification, onAssign }: { orders: AppData['orders']; vendors: AppData['vendors']; query: string; setQuery: (value: string) => void; notifyingOrderId: string | null; onRetryNotification: (orderId: string) => Promise<void>; onAssign: (orderId: string, vendorUid: string) => Promise<void> }) {
+function AdminOrdersView({ orders, vendors, query, setQuery, notifyingOrderId, onRetryNotification, onAssign, onCreateBooking }: { orders: AppData['orders']; vendors: AppData['vendors']; query: string; setQuery: (value: string) => void; notifyingOrderId: string | null; onRetryNotification: (orderId: string) => Promise<void>; onAssign: (orderId: string, vendorUid: string) => Promise<void>; onCreateBooking: () => void }) {
   const [page, setPage] = useState(1);
   const [historyOrderId, setHistoryOrderId] = useState<string | null>(null);
   const [history, setHistory] = useState<OrderHistoryItem[]>([]);
@@ -368,8 +380,25 @@ function AdminOrdersView({ orders, vendors, query, setQuery, notifyingOrderId, o
     setHistoryLoading(true);
     try { setHistory(await loadAdminOrderHistory(orderId)); } catch { setHistory([]); } finally { setHistoryLoading(false); }
   };
+  useEffect(() => {
+    const table = document.querySelector<HTMLTableElement>('.admin-orders-table');
+    if (!table) return undefined;
+    const openFromBookingCell = (event: Event) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('td[data-label="Booking"] b')) return;
+      const orderId = target.closest('td[data-label="Booking"]')?.querySelector('b')?.textContent?.trim();
+      if (orderId) void openHistory(orderId);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === ' ') openFromBookingCell(event);
+    };
+    table.addEventListener('click', openFromBookingCell);
+    table.addEventListener('keydown', handleKeyDown);
+    table.querySelectorAll('td[data-label="Booking"] b').forEach(element => { element.setAttribute('role', 'button'); element.setAttribute('tabindex', '0'); element.setAttribute('aria-label', `View history for ${element.textContent}`); });
+    return () => { table.removeEventListener('click', openFromBookingCell); table.removeEventListener('keydown', handleKeyDown); };
+  }, [openHistory, visibleOrders]);
   return <>
-    <PageHeader eyebrow="Admin workspace · Orders" title="Booking control." copy="Search and review all tenant orders and their current lifecycle status." action={orders[0] && <Button variant="quiet" icon={History} onClick={() => void openHistory(orders[0].id)}>View latest history</Button>} />
+    <PageHeader eyebrow="Admin workspace · Orders" title="Booking control." copy="Search and review all tenant orders and their current lifecycle status." action={<Button variant="primary" icon={Plus} onClick={onCreateBooking}>Create booking</Button>} />
     <article className="data-surface table-surface admin-orders-surface"><div className="table-head"><div><span className="eyebrow">Tenant orders</span><h2>{orders.length} visible orders</h2></div><label className="input-icon" htmlFor="admin-orders-search"><Search size={15} /><input id="admin-orders-search" placeholder="Search order or customer" value={query} onChange={event => { setQuery(event.target.value); setPage(1); }} /></label></div><div className="table-scroll"><table className="admin-orders-table"><thead><tr><th>Booking</th><th>Service</th><th>Customer</th><th>Vendor</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead><tbody>{visibleOrders.map(order => <tr key={order.id}><td data-label="Booking"><b className="mono">{order.id}</b><small>{order.created}</small></td><td data-label="Service">{order.service}<small>{order.capacity}</small></td><td data-label="Customer">{order.customer}<small>{order.address}</small></td><td data-label="Vendor">{order.vendor || 'Pending assignment'}<small>{order.driver || '—'}</small></td><td data-label="Amount"><b>{money(order.amount)}</b><small>{order.payment}</small></td><td data-label="Status"><Status>{order.status}</Status></td><td data-label="Actions"><div className="table-actions">{['Created', 'Pending acceptance', 'Rejected', 'Vendor assigned'].includes(order.status) && !order.vendor ? <><Button variant="quiet" icon={RefreshCcw} onClick={() => void onRetryNotification(order.id)} disabled={notifyingOrderId === order.id}>{notifyingOrderId === order.id ? 'Sending...' : order.status === 'Rejected' ? 'Re-initiate vendors' : 'Notify vendors'}</Button><select aria-label={`Assign vendor to ${order.id}`} defaultValue="" onChange={event => void onAssign(order.id, event.target.value)}><option value="">Assign vendor</option>{vendors.filter(vendor => vendor.status === 'active' || vendor.available === true).map(vendor => <option key={vendor.uid} value={vendor.uid}>{vendor.name}</option>)}</select></> : null}<Button variant="quiet" icon={History} onClick={() => void openHistory(order.id)}>History</Button></div></td></tr>)}</tbody></table></div><Pagination page={page} pageSize={10} total={orders.length} onPageChange={setPage} /></article>
     {historyOrderId && <AdminOrderHistoryModal orderId={historyOrderId} history={history} loading={historyLoading} onClose={() => setHistoryOrderId(null)} />}
   </>;
@@ -386,10 +415,6 @@ function AdminTrackingView({ orders, vendors }: { orders: AppData['orders']; ven
     <section className="stats-grid"><StatCard icon={Truck} label="Active deliveries" value={activeOrders.length} detail="Current routes" /><StatCard icon={Users} label="Vendor records" value={vendors.length} detail="Tenant vendors" /><StatCard icon={MapPin} label="Shared locations" value={activeOrders.filter(order => typeof order.vendorLatitude === 'number').length} detail="Latest coordinates" /></section>
     <div className="order-list">{activeOrders.length ? activeOrders.map(order => <article className="order-row" key={order.id}><div className="order-service-icon"><Truck size={19} /></div><div className="order-main"><div><b>{order.id}</b><Status>{order.status}</Status></div><span>{order.customer} · {order.address}</span><small>{order.vendor || 'Waiting for vendor assignment'} · {order.eta}</small></div></article>) : <div className="empty-state"><MapPin size={28} /><h3>No active routes</h3><p>Live vendor routes will appear here when orders are accepted.</p></div>}</div>
   </>;
-}
-
-function AdminSupportView({ onNotify }: { onNotify: (message: string) => void }) {
-  return <><PageHeader eyebrow="Admin workspace · Help" title="Operations support." copy="Coordinate dispatch, vendor access, customer escalations, and platform issues." /><section className="data-surface support-surface"><MessageSquare size={24} /><h2>Dispatch desk</h2><p>Use the operations desk for tenant-level issues and urgent delivery escalations.</p><Button variant="primary" icon={MessageSquare} onClick={() => onNotify('Operations support request opened')}>Open support request</Button></section></>;
 }
 
 function AdminBookingView({ onNotify }: { onNotify: (message: string) => void }) {
