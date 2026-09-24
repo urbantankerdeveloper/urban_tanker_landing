@@ -2586,3 +2586,32 @@ textarea[aria-invalid="true"] {
 	background: var(--mint);
 	border-radius: 7px;
 }
+.chart {
+	min-width: 0;
+	width: max-content;
+	min-width: 100%;
+	overflow: visible;
+	overscroll-behavior-inline: contain;
+}
+
+.chart-surface {
+	min-width: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-gutter: stable;
+	-webkit-overflow-scrolling: touch;
+}
+
+.chart .bar-group {
+	min-width: 64px;
+	flex: 1 0 64px;
+}
+
+.chart::-webkit-scrollbar {
+	height: 5px;
+}
+
+.chart::-webkit-scrollbar-thumb {
+	background: #b9d8d4;
+	border-radius: 999px;
+}

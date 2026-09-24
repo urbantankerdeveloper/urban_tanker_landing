@@ -129,7 +129,10 @@ async function sendUnacceptedOrderAlertEmail(order: Record<string, any>, waiting
 
 async function scanUnacceptedOrders(): Promise<void> {
   const cutoff = new Date(Date.now() - unacceptedOrderAlertMinutes * 60 * 1000);
-  const candidates = await ordersCollection.find({ client_id: { $exists: true }, status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false }, created: { $lt: cutoff }, unaccepted_alerted_at: { $exists: false } }, { projection: { _id: 0, id: 1, client_id: 1, service: 1, created: 1 } }).limit(100).toArray();
+  const candidates = (await ordersCollection.find({ client_id: { $exists: true }, status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false }, unaccepted_alerted_at: { $exists: false } }, { projection: { _id: 0, id: 1, client_id: 1, service: 1, created: 1 } }).limit(500).toArray()).filter(order => {
+    const createdAt = new Date(order.created).getTime();
+    return Number.isFinite(createdAt) && createdAt < cutoff.getTime();
+  }).slice(0, 100);
   for (const order of candidates) {
     const claimed = await ordersCollection.updateOne({ id: order.id, client_id: order.client_id, assigned_vendor_uid: { $exists: false }, unaccepted_alerted_at: { $exists: false } }, { $set: { unaccepted_alerted_at: new Date(), updated_at: new Date() } });
     if (!claimed.matchedCount) continue;

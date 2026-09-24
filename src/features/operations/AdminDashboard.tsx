@@ -34,6 +34,9 @@ export function AdminDeliveryNotifications() {
     const token = getAuthToken();
     if (!token) return undefined;
     const socket = io(API_BASE_URL, { auth: { token }, transports: ['websocket', 'polling'] });
+    socket.on('connect', () => console.info('Admin Socket.IO connected', socket.id));
+    socket.on('connect_error', error => console.error('Admin Socket.IO connection failed', error.message));
+    socket.on('disconnect', reason => console.info('Admin Socket.IO disconnected', reason));
     const handleDelivered = (event: { orderId: string; vendorName: string }) => {
       const notification = { ...event, id: `${event.orderId}-${Date.now()}`, kind: 'delivered' as const };
       setNotifications(current => [notification, ...current].slice(0, 6));
