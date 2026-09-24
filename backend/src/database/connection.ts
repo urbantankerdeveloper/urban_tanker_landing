@@ -37,6 +37,7 @@ export const vendorsCollection = (await databasePromise).collection<any>('vendor
 export const driversCollection = (await databasePromise).collection<any>('drivers');
 export const vehiclesCollection = (await databasePromise).collection<any>('vehicles');
 export const contentCollection = (await databasePromise).collection<any>('content');
+export const couponsCollection = (await databasePromise).collection<any>('coupons');
 export const maintenanceCollection = (await databasePromise).collection<any>('maintenance');
 export const attendanceCollection = (await databasePromise).collection<any>('driver_attendance');
 export const payoutsCollection = (await databasePromise).collection<any>('payouts');

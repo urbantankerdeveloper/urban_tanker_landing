@@ -36,6 +36,16 @@ const collections = {
         approval_status: { enum: ['pending', 'approved', 'rejected'] },
         status: { enum: ['active', 'inactive', 'Online', 'Unavailable'] },
         updated_at: { bsonType: 'date' },
+        email: { bsonType: 'string' },
+        phone: { bsonType: ['string', 'null'] },
+        driver: { bsonType: 'string' },
+        zone: { bsonType: 'string' },
+        vehicle: { bsonType: 'string' },
+        capacity: { bsonType: 'string' },
+        rating: { bsonType: ['int', 'long', 'double'] },
+        latitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        longitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        location_updated_at: { bsonType: 'date' },
       },
     },
   },
@@ -119,6 +129,19 @@ const collections = {
         otpVerifiedAt: { bsonType: 'date' },
         statusHistory: { bsonType: 'array' },
         created: { bsonType: ['date', 'string'] },
+        updated_at: { bsonType: 'date' },
+        assigned_vendor_uid: { bsonType: 'string' },
+        vendor: { bsonType: 'string' },
+        vendorEmail: { bsonType: 'string' },
+        vendorPhone: { bsonType: ['string', 'null'] },
+        vendorAcceptedAt: { bsonType: 'date' },
+        vendorRejectedAt: { bsonType: 'date' },
+        vendorRejectionReason: { bsonType: 'string' },
+        eta: { bsonType: 'string' },
+        vendorLatitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        vendorLongitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        lastLocationUpdatedAt: { bsonType: 'date' },
+        rejectedVendorUids: { bsonType: 'array' },
         unaccepted_alerted_at: { bsonType: 'date' },
       },
     },
@@ -228,27 +251,31 @@ const collections = {
       },
     },
   },
+  coupons: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'code', 'label', 'discount', 'active', 'created_at', 'updated_at'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        code: { bsonType: 'string' },
+        label: { bsonType: 'string' },
+        discount: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        service: { bsonType: ['string', 'null'] },
+        firstBooking: { bsonType: 'bool' },
+        active: { bsonType: 'bool' },
+        created_at: { bsonType: 'date' },
+        updated_at: { bsonType: 'date' },
+      },
+    },
+  },
   content: {
     $jsonSchema: {
       bsonType: 'object',
-      required: ['client_id', 'config', 'coupons', 'updated_at'],
+      required: ['client_id', 'config', 'updated_at'],
       properties: {
         client_id: { bsonType: 'string' },
         config: { bsonType: 'object' },
-        coupons: {
-          bsonType: 'array',
-          items: {
-            bsonType: 'object',
-            required: ['code', 'label', 'discount'],
-            properties: {
-              code: { bsonType: 'string' },
-              label: { bsonType: 'string' },
-              discount: { bsonType: ['int', 'long', 'double', 'decimal'] },
-              service: { bsonType: 'string' },
-              firstBooking: { bsonType: 'bool' },
-            },
-          },
-        },
         updated_at: { bsonType: 'date' },
         latitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
         longitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
@@ -301,9 +328,16 @@ async function loadConfiguredContent(db) {
     const coupons = Array.isArray(content.coupons) ? content.coupons : [];
     await db.collection('content').updateOne(
       { client_id: clientId },
-      { $set: { client_id: clientId, config, coupons, updated_at: new Date() } },
+      { $set: { client_id: clientId, config, updated_at: new Date() } },
       { upsert: true },
     );
+    for (const coupon of coupons) {
+      await db.collection('coupons').updateOne(
+        { client_id: clientId, code: coupon.code },
+        { $setOnInsert: { id: randomUUID(), client_id: clientId, code: coupon.code, label: coupon.label, discount: coupon.discount, service: coupon.service || null, firstBooking: coupon.firstBooking === true, active: true, created_at: new Date(), updated_at: new Date() } },
+        { upsert: true },
+      );
+    }
     console.log(`Loaded configured content for client ${clientId}`);
   } catch (error) {
     if (!process.env.CONTENT_CONFIG_PATH && !configuredJson && error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
@@ -348,6 +382,9 @@ const initDatabase = async () => {
     await db.collection('subscriptions').createIndex({ client_id: 1, owner_uid: 1, status: 1 }, { name: 'customer_subscriptions' });
     await db.collection('invoices').createIndex({ client_id: 1, order_id: 1 }, { unique: true, name: 'order_invoice_unique' });
     await db.collection('support_requests').createIndex({ client_id: 1, status: 1, updated_at: -1 }, { name: 'support_status_updated' });
+    await db.collection('coupons').createIndex({ client_id: 1, code: 1 }, { unique: true, name: 'client_coupon_code_unique' });
+    await db.collection('coupons').createIndex({ client_id: 1, active: 1 }, { name: 'active_coupons' });
+    await db.collection('coupons').createIndex({ client_id: 1, created_at: -1 }, { name: 'coupons_by_date' });
     const ordersForHistory = await db.collection('orders').find({}, { projection: { _id: 0, id: 1, client_id: 1, status: 1, owner_uid: 1, statusHistory: 1, created: 1 } }).toArray();
     for (const order of ordersForHistory) {
       if (await db.collection('order_history').countDocuments({ client_id: order.client_id, order_id: order.id })) continue;

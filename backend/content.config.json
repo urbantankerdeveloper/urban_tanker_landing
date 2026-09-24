@@ -23,6 +23,5 @@
     "vendor": { "eyebrow": "Vendor portal", "title": "Keep every delivery moving.", "description": "Accept new bookings quickly, keep the customer updated, and complete delivery with their OTP.", "shareLocation": "Share location", "protocol": "Delivery protocol", "protocolTitle": "Protect every handover." },
     "admin": { "eyebrow": "Network intelligence · September 2026", "title": "Welcome back, Admin.", "description": "Monitor bookings, operations, revenue, and tanker activity across Chennai.", "refresh": "Refresh", "createOrder": "Create test order", "orders": "Orders", "bookingControl": "Booking control", "export": "Export report" },
     "loading": "Connecting to secure operations data..."
-  },
-  "coupons": []
+  }
 }

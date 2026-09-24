@@ -10,7 +10,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerCustomerRoutes } from './routes/customer.js';
 import { registerSharedRoutes } from './routes/shared.js';
 import { registerVendorRoutes } from './routes/vendor.js';
-import { closeConnection, contentCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, supportRequestsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import { closeConnection, contentCollection, couponsCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, supportRequestsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import Razorpay from 'razorpay';
 import { hashPassword, hashToken } from './utils/auth.js';
@@ -243,45 +243,6 @@ app.get(['/health', '/health/ready'], async (req, res) => {
   const includeDetails = req.query.details === 'true' || req.query.details === '1';
   const { healthy, response } = await getHealthStatus(includeDetails);
   res.status(healthy ? 200 : 503).json(response);
-});
-
-app.post('/api/admin/coupons', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
-    const code = String(req.body.code || '').trim().toUpperCase();
-    const label = String(req.body.label || '').trim();
-    const service = typeof req.body.service === 'string' ? req.body.service.trim() : '';
-    const discount = Number(req.body.discount);
-    const firstBooking = req.body.firstBooking === true;
-    if (!/^[A-Z0-9_-]{3,30}$/.test(code) || !label || !Number.isFinite(discount) || discount <= 0) return res.status(400).json({ message: 'Enter a valid code, label, and discount.' });
-    const content = await contentCollection.findOne({ client_id: req.user.clientId }, { projection: { _id: 1 } });
-    if (!content) return res.status(404).json({ message: 'Content configuration was not found.' });
-    const duplicate = await contentCollection.findOne({ client_id: req.user.clientId, coupons: { $elemMatch: { code } } }, { projection: { _id: 1 } });
-    if (duplicate) return res.status(409).json({ message: 'A coupon with that code already exists.' });
-    const coupon = { code, label, discount, service: service || undefined, firstBooking, active: true };
-    const couponUpdate: Record<string, any> = { $push: { coupons: coupon }, $set: { updated_at: new Date() } };
-    await contentCollection.updateOne({ client_id: req.user.clientId }, couponUpdate);
-    contentCache.delete(req.user.clientId);
-    res.status(201).json({ coupon });
-  } catch (error) {
-    console.error('Coupon creation error:', error);
-    res.status(500).json({ message: 'Unable to create coupon.' });
-  }
-});
-
-app.patch('/api/admin/coupons/:code/status', authenticateToken, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
-    const code = String(req.params.code || '').trim().toUpperCase();
-    const active = req.body.active === true;
-    const result = await contentCollection.updateOne({ client_id: req.user.clientId, 'coupons.code': code }, { $set: { 'coupons.$.active': active, updated_at: new Date() } });
-    if (!result.matchedCount) return res.status(404).json({ message: 'Coupon was not found.' });
-    contentCache.delete(req.user.clientId);
-    res.json({ code, active });
-  } catch (error) {
-    console.error('Coupon status update error:', error);
-    res.status(500).json({ message: 'Unable to update coupon status.' });
-  }
 });
 
 app.get('/api/vendor/dashboard', authenticateToken, async (req, res) => {
@@ -796,6 +757,7 @@ app.patch('/api/orders/:orderId/rating', authenticateToken, async (req, res) => 
 registerAdminRoutes(app, {
   authenticateToken,
   contentCollection,
+  couponsCollection,
   contentCache,
   ordersCollection,
   vendorsCollection,
@@ -851,6 +813,7 @@ registerSharedRoutes(app, {
   authenticateToken,
   notificationsCollection,
   contentCollection,
+  couponsCollection,
   contentCache,
   ordersCollection,
   invoicesCollection,

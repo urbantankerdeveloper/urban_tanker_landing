@@ -25,6 +25,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
     vehiclesCollection,
     driversCollection,
     contentCollection,
+    couponsCollection,
     contentCache,
     io,
     notificationHelpers,
@@ -37,37 +38,82 @@ export function registerAdminRoutes(app: Express, deps: any) {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
       const code = String(req.body.code || '').trim().toUpperCase();
       const label = String(req.body.label || '').trim();
-      const service = typeof req.body.service === 'string' ? req.body.service.trim() : '';
+      const service = typeof req.body.service === 'string' ? req.body.service.trim() : null;
       const discount = Number(req.body.discount);
       const firstBooking = req.body.firstBooking === true;
       if (!/^[A-Z0-9_-]{3,30}$/.test(code) || !label || !Number.isFinite(discount) || discount <= 0) return res.status(400).json({ message: 'Enter a valid code, label, and discount.' });
-      const content = await contentCollection.findOne({ client_id: req.user.clientId }, { projection: { _id: 1 } });
-      if (!content) return res.status(404).json({ message: 'Content configuration was not found.' });
-      const duplicate = await contentCollection.findOne({ client_id: req.user.clientId, coupons: { $elemMatch: { code } } }, { projection: { _id: 1 } });
+      const duplicate = await couponsCollection.findOne({ client_id: req.user.clientId, code }, { projection: { _id: 1 } });
       if (duplicate) return res.status(409).json({ message: 'A coupon with that code already exists.' });
-      const coupon = { code, label, discount, service: service || undefined, firstBooking, active: true };
-      const couponUpdate: Record<string, any> = { $push: { coupons: coupon }, $set: { updated_at: new Date() } };
-      await contentCollection.updateOne({ client_id: req.user.clientId }, couponUpdate);
-      contentCache.delete(req.user.clientId);
+      const now = new Date();
+      const coupon = { id: deps.randomUUID(), client_id: req.user.clientId, code, label, discount, service, firstBooking, active: true, created_at: now, updated_at: now };
+      await couponsCollection.insertOne(coupon);
       res.status(201).json({ coupon });
     } catch (error) {
-      console.error('Coupon creation error:', error);
+      const chainedError = new Error('Coupon creation error', { cause: error });
+      console.error(chainedError);
       res.status(500).json({ message: 'Unable to create coupon.' });
     }
   });
 
-  app.patch('/api/admin/coupons/:code/status', deps.authenticateToken, async (req: any, res: any) => {
+  app.get('/api/admin/coupons', deps.authenticateToken, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
-      const code = String(req.params.code || '').trim().toUpperCase();
-      const active = req.body.active === true;
-      const result = await contentCollection.updateOne({ client_id: req.user.clientId, 'coupons.code': code }, { $set: { 'coupons.$.active': active, updated_at: new Date() } });
-      if (!result.matchedCount) return res.status(404).json({ message: 'Coupon was not found.' });
-      contentCache.delete(req.user.clientId);
-      res.json({ code, active });
+      const coupons = await couponsCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ created_at: -1 }).toArray();
+      res.json({ coupons });
     } catch (error) {
-      console.error('Coupon status update error:', error);
+      const chainedError = new Error('Coupons list error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to load coupons.' });
+    }
+  });
+
+  app.patch('/api/admin/coupons/:couponId/status', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      const active = req.body.active === true;
+      const result = await couponsCollection.updateOne({ id: req.params.couponId, client_id: req.user.clientId }, { $set: { active, updated_at: new Date() } });
+      if (!result.matchedCount) return res.status(404).json({ message: 'Coupon was not found.' });
+      res.json({ id: req.params.couponId, active });
+    } catch (error) {
+      const chainedError = new Error('Coupon status update error', { cause: error });
+      console.error(chainedError);
       res.status(500).json({ message: 'Unable to update coupon status.' });
+    }
+  });
+
+  app.patch('/api/admin/coupons/:couponId', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      const label = typeof req.body.label === 'string' ? req.body.label.trim() : undefined;
+      const service = typeof req.body.service === 'string' ? req.body.service.trim() : undefined;
+      const discount = typeof req.body.discount === 'number' ? req.body.discount : undefined;
+      const firstBooking = typeof req.body.firstBooking === 'boolean' ? req.body.firstBooking : undefined;
+      const update: Record<string, any> = { updated_at: new Date() };
+      if (label) update.label = label;
+      if (service !== undefined) update.service = service || null;
+      if (discount && discount > 0) update.discount = discount;
+      if (firstBooking !== undefined) update.firstBooking = firstBooking;
+      const result = await couponsCollection.updateOne({ id: req.params.couponId, client_id: req.user.clientId }, { $set: update });
+      if (!result.matchedCount) return res.status(404).json({ message: 'Coupon was not found.' });
+      const updatedCoupon = await couponsCollection.findOne({ id: req.params.couponId, client_id: req.user.clientId }, { projection: { _id: 0 } });
+      res.json({ coupon: updatedCoupon });
+    } catch (error) {
+      const chainedError = new Error('Coupon update error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to update coupon.' });
+    }
+  });
+
+  app.delete('/api/admin/coupons/:couponId', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      const result = await couponsCollection.deleteOne({ id: req.params.couponId, client_id: req.user.clientId });
+      if (!result.deletedCount) return res.status(404).json({ message: 'Coupon was not found.' });
+      res.status(204).send();
+    } catch (error) {
+      const chainedError = new Error('Coupon deletion error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to delete coupon.' });
     }
   });
 

@@ -577,10 +577,19 @@ export async function createAdminCoupon(input: { code: string; label: string; di
   return payload.coupon;
 }
 
-export async function updateAdminCouponStatus(code: string, active: boolean): Promise<void> {
+export async function loadAdminCoupons(): Promise<CouponContent[]> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${API_BASE_URL}/api/admin/coupons/${encodeURIComponent(code)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
+  const response = await fetch(`${API_BASE_URL}/api/admin/coupons`, { method: 'GET', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { coupons?: CouponContent[]; message?: string };
+  if (!response.ok || !payload.coupons) throw new Error(payload.message || 'Unable to load coupons.');
+  return payload.coupons;
+}
+
+export async function updateAdminCouponStatus(couponId: string, active: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/coupons/${encodeURIComponent(couponId)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
   const payload = await response.json().catch(() => ({})) as { message?: string };
   if (!response.ok) throw new Error(payload.message || 'Unable to update coupon status.');
 }
