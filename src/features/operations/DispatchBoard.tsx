@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { MapPin, Package, Truck } from 'lucide-react';
 import type { AppData } from '../../shared/lib/types';
-import { Button, PageHeader, Status } from '../../shared/components/ui';
+import { PageHeader, Status } from '../../shared/components/ui';
 import { money } from '../../shared/data/demo';
 
 const columns = [

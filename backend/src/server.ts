@@ -10,7 +10,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerCustomerRoutes } from './routes/customer.js';
 import { registerSharedRoutes } from './routes/shared.js';
 import { registerVendorRoutes } from './routes/vendor.js';
-import { closeConnection, contentCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import { closeConnection, contentCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, supportRequestsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import Razorpay from 'razorpay';
 import { hashPassword, hashToken } from './utils/auth.js';
@@ -30,6 +30,15 @@ const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_MS || 60000);
 const vendorDispatchRadiusKm = Number(process.env.VENDOR_DISPATCH_RADIUS_KM || 25);
 const startedAt = new Date();
 const serviceVersion = process.env.npm_package_version || '1.0.0';
+const unacceptedOrderAlertMinutes = Math.max(1, Number(process.env.UNACCEPTED_ORDER_ALERT_MINUTES || 15));
+
+async function sendApprovalStatusEmail(input: { email?: string; name?: string; resource: string; status: 'approved' | 'rejected'; detail: string }): Promise<void> {
+  const emailKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.MAIL_FROM;
+  if (!emailKey || !emailFrom || !input.email) return;
+  const approved = input.status === 'approved';
+  await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${emailKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: emailFrom, to: [input.email], subject: `Urban Tanker ${input.resource} ${approved ? 'approved' : 'requires attention'}`, html: `<p>Hello ${input.name || 'there'},</p><p>Your ${input.resource} registration has been <strong>${approved ? 'approved' : 'rejected'}</strong>.</p><p>${input.detail}</p>${approved ? '<p>You can now use it in the Urban Tanker system.</p>' : '<p>Please contact the administrator for more information.</p>'}` }) });
+}
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID as string,
   key_secret: process.env.RAZORPAY_KEY_SECRET as string,
@@ -51,12 +60,14 @@ io.use(async (socket, next) => {
 });
 
 io.on('connection', socket => {
+  console.log(`Socket connected: ${socket.data.user.role} ${socket.data.user.uid} (${socket.data.user.clientId})`);
   if (socket.data.user.role === 'vendor') {
     socket.join(`vendor:${socket.data.user.clientId}`);
     socket.join(`vendor:${socket.data.user.clientId}:${socket.data.user.uid}`);
   }
   if (socket.data.user.role === 'customer') socket.join(`customer:${socket.data.user.uid}`);
   if (socket.data.user.role === 'admin') socket.join(`admin:${socket.data.user.clientId}`);
+  socket.on('disconnect', reason => console.log(`Socket disconnected: ${socket.data.user.role} ${socket.data.user.uid} (${reason})`));
 });
 
 async function notifyCustomerOfAcceptance(order: Record<string, any>, vehicle: Record<string, any>): Promise<void> {
@@ -108,6 +119,28 @@ async function recordNotification(input: { clientId: string; recipientRole: 'cus
   });
 }
 
+async function sendUnacceptedOrderAlertEmail(order: Record<string, any>, waitingMinutes: number): Promise<void> {
+  const adminEmail = process.env.MAIN_ADMIN_EMAIL || process.env.ADMIN_EMAIL;
+  const emailKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.MAIL_FROM;
+  if (!adminEmail || !emailKey || !emailFrom) return;
+  await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${emailKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: emailFrom, to: [adminEmail], subject: `Order ${order.id} needs vendor attention`, html: `<p>Order <strong>${order.id}</strong> has not been accepted by a vendor.</p><p>Service: ${order.service || 'Booking'} · Waiting: ${waitingMinutes} minutes.</p><p>Open the admin Orders workspace to review and assign a vendor.</p>` }) });
+}
+
+async function scanUnacceptedOrders(): Promise<void> {
+  const cutoff = new Date(Date.now() - unacceptedOrderAlertMinutes * 60 * 1000);
+  const candidates = await ordersCollection.find({ client_id: { $exists: true }, status: { $in: ['Created', 'Pending acceptance', 'Vendor assigned'] }, assigned_vendor_uid: { $exists: false }, created: { $lt: cutoff }, unaccepted_alerted_at: { $exists: false } }, { projection: { _id: 0, id: 1, client_id: 1, service: 1, created: 1 } }).limit(100).toArray();
+  for (const order of candidates) {
+    const claimed = await ordersCollection.updateOne({ id: order.id, client_id: order.client_id, assigned_vendor_uid: { $exists: false }, unaccepted_alerted_at: { $exists: false } }, { $set: { unaccepted_alerted_at: new Date(), updated_at: new Date() } });
+    if (!claimed.matchedCount) continue;
+    const waitingMinutes = Math.max(1, Math.floor((Date.now() - new Date(order.created).getTime()) / 60000));
+    const detail = `${order.service || 'Booking'} · waiting ${waitingMinutes} minutes.`;
+    await recordNotification({ clientId: order.client_id, recipientRole: 'admin', orderId: order.id, type: 'unaccepted-order', title: 'Order needs vendor attention', detail });
+    io.to(`admin:${order.client_id}`).emit('order:unaccepted-alert', { orderId: order.id, service: order.service, waitingMinutes });
+    await sendUnacceptedOrderAlertEmail(order, waitingMinutes).catch(error => console.error('Unaccepted order email error:', error));
+  }
+}
+
 function distanceKm(firstLatitude, firstLongitude, secondLatitude, secondLongitude) {
   const radians = value => value * Math.PI / 180;
   const deltaLatitude = radians(secondLatitude - firstLatitude);
@@ -129,6 +162,7 @@ async function dispatchOrderNotification(order: Record<string, any>, excludedVen
   }).map(vendor => vendor.uid);
   const payload = { ...removeDeliveryOtpFields(order), excludedVendorUids };
   for (const vendorUid of eligibleVendorUids) io.to(`vendor:${order.client_id}:${vendorUid}`).emit('order:created', payload);
+  if (!eligibleVendorUids.length) console.warn(`No eligible vendor sockets for order ${order.id} in client ${order.client_id}. Active vehicles with active drivers are required.`);
   return eligibleVendorUids;
 }
 
@@ -297,6 +331,7 @@ app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
       ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}),
       ...(permitExpiry ? { permit_expiry: permitExpiry } : {}),
       active: false,
+      approval_status: 'pending',
       updated_at: now,
     };
     await vehiclesCollection.insertOne(vehicle);
@@ -321,7 +356,7 @@ app.post('/api/vendor/drivers', authenticateToken, async (req, res) => {
   const address = String(req.body.address || '').trim();
   const addressProof = typeof req.body.addressProof === 'string' && req.body.addressProof.length <= 3_000_000 ? req.body.addressProof : '';
   if (!name || !address) return res.status(400).json({ message: 'Driver name and address are required.' });
-  const driver = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, name, phone, address, address_proof: addressProof, active: false, updated_at: new Date() };
+  const driver = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, name, phone, address, address_proof: addressProof, active: false, approval_status: 'pending', updated_at: new Date() };
   await driversCollection.insertOne(driver);
   res.status(201).json({ driver });
 });
@@ -329,7 +364,7 @@ app.post('/api/vendor/drivers', authenticateToken, async (req, res) => {
 app.patch('/api/vendor/drivers/:driverId/status', authenticateToken, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
   const active = req.body.active === true;
-  const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: { active, updated_at: new Date() } });
+  const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, approval_status: 'approved' }, { $set: { active, updated_at: new Date() } });
   if (!result.matchedCount) return res.status(404).json({ message: 'Driver was not found.' });
   res.json({ id: req.params.driverId, active });
 });
@@ -348,8 +383,9 @@ app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res)
   const active = Boolean(req.body.active);
   const update: Record<string, any> = { active, updated_at: new Date() };
   if (typeof req.body.driverActive === 'boolean') update.driver_active = req.body.driverActive;
-  const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1 } });
+  const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1, approval_status: 1 } });
   if (!vehicle) return res.status(404).json({ message: 'Vehicle was not found.' });
+  if (vehicle.approval_status !== 'approved') return res.status(403).json({ message: 'This vehicle is awaiting administrator approval.' });
   if (typeof req.body.driverId === 'string') {
     const driver = await driversCollection.findOne({ id: req.body.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { id: 1, name: 1, phone: 1, active: 1 } });
     if (!driver) return res.status(404).json({ message: 'Driver was not found.' });
@@ -500,7 +536,7 @@ app.post('/api/admin/users', authenticateToken, async (req, res) => {
     const uid = randomUUID();
     const user = { _id: uid, uid, email, password_hash: await hashPassword(password), display_name: displayName, phone_number: phoneNumber || null, role, email_verified: false, phone_verified: false, status: role === 'vendor' ? 'inactive' : 'active', available: role === 'vendor' ? false : undefined, created_at: now, updated_at: now, last_login: null, client_id: clientId };
     await usersCollection.insertOne(user);
-    if (role === 'vendor') await vendorsCollection.insertOne({ uid, client_id: clientId, name: displayName, email, phone: phoneNumber || null, driver: '', zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, rating: '', updated_at: now });
+    if (role === 'vendor') await vendorsCollection.insertOne({ uid, client_id: clientId, name: displayName, email, phone: phoneNumber || null, driver: '', zone: '', vehicle: '', capacity: '', status: 'inactive', approval_status: 'pending', available: false, rating: '', updated_at: now });
     res.status(201).json({ uid, role, name: displayName, email, phone: phoneNumber, status: user.status, available: user.available === true });
   } catch (error) {
     console.error('Admin user creation error:', error);
@@ -529,13 +565,16 @@ app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req,
     const active = req.body.active === true;
     const status = active ? 'active' : 'inactive';
     const filter = { uid: req.params.vendorUid, client_id: req.user.clientId };
+    const account = await usersCollection.findOne({ ...filter, role: 'vendor' }, { projection: { email: 1, display_name: 1, approval_status: 1 } });
     if (!active) {
       const activeOrder = await ordersCollection.findOne({ client_id: req.user.clientId, assigned_vendor_uid: req.params.vendorUid, status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] } }, { projection: { _id: 0, id: 1 } });
       if (activeOrder) return res.status(409).json({ message: `Vendor cannot be set inactive while order ${activeOrder.id} is active.` });
     }
     const vendorResult = await vendorsCollection.updateOne(filter, { $set: { status, available: active, updated_at: new Date() } });
     if (!vendorResult.matchedCount) return res.status(404).json({ message: 'Vendor was not found.' });
-    await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, updated_at: new Date() } });
+    if (active) await vendorsCollection.updateOne(filter, { $set: { approval_status: 'approved' } });
+    await usersCollection.updateOne({ ...filter, role: 'vendor' }, { $set: { status, available: active, ...(active ? { approval_status: 'approved' } : {}), updated_at: new Date() } });
+    if (active && account?.approval_status !== 'approved') await sendApprovalStatusEmail({ email: account?.email, name: account?.display_name, resource: 'vendor account', status: 'approved', detail: 'Your vendor registration has been verified by the administrator.' }).catch(error => console.error('Vendor approval email error:', error));
     res.json({ uid: req.params.vendorUid, status, available: active });
   } catch (error) {
     console.error('Admin vendor status error:', error);
@@ -611,7 +650,7 @@ app.post('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, async (req
     const registrationExpiry = parseExpiry(req.body.registrationExpiry);
     const insuranceExpiry = parseExpiry(req.body.insuranceExpiry);
     const permitExpiry = parseExpiry(req.body.permitExpiry);
-    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}), ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}), ...(permitExpiry ? { permit_expiry: permitExpiry } : {}), active: false, updated_at: new Date() };
+    const vehicle = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}), ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}), ...(permitExpiry ? { permit_expiry: permitExpiry } : {}), active: false, approval_status: 'pending', updated_at: new Date() };
     await vehiclesCollection.insertOne(vehicle);
     res.status(201).json({ vehicle });
   } catch (error) {
@@ -631,7 +670,7 @@ app.post('/api/admin/vendors/:vendorUid/drivers', authenticateToken, async (req,
     const address = String(req.body.address || '').trim();
     const addressProof = typeof req.body.addressProof === 'string' && req.body.addressProof.length <= 3_000_000 ? req.body.addressProof : '';
     if (!name || !address) return res.status(400).json({ message: 'Driver name and address are required.' });
-    const driver = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, name, phone, address, address_proof: addressProof, active: false, updated_at: new Date() };
+    const driver = { id: randomUUID(), client_id: req.user.clientId, vendor_uid: req.params.vendorUid, name, phone, address, address_proof: addressProof, active: false, approval_status: 'pending', updated_at: new Date() };
     await driversCollection.insertOne(driver);
     res.status(201).json({ driver });
   } catch (error) {
@@ -813,6 +852,7 @@ registerSharedRoutes(app, {
   ordersCollection,
   invoicesCollection,
   subscriptionsCollection,
+  supportRequestsCollection,
   usersCollection,
   razorpay,
   createHmac,
@@ -843,12 +883,15 @@ app.use((err, req, res, next) => {
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Urban Tanker Backend running on http://0.0.0.0:${PORT}`);
   console.log(`📝 Health check: http://localhost:${PORT}/health`);
+  void scanUnacceptedOrders().catch(error => console.error('Initial unaccepted order scan error:', error));
 });
+const unacceptedOrderScanTimer = setInterval(() => { void scanUnacceptedOrders().catch(error => console.error('Unaccepted order scan error:', error)); }, 60_000);
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Closing server...');
   await flushMonitoring();
+  clearInterval(unacceptedOrderScanTimer);
   await closeConnection();
   process.exit(0);
 });
@@ -856,6 +899,7 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   console.log('SIGINT received. Closing server...');
   await flushMonitoring();
+  clearInterval(unacceptedOrderScanTimer);
   await closeConnection();
   process.exit(0);
 });

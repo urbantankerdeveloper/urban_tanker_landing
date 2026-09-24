@@ -14,6 +14,7 @@ const collections = {
         role: { enum: ['customer', 'vendor', 'admin'] },
         status: { enum: ['active', 'inactive'] },
         available: { bsonType: 'bool' },
+        approval_status: { enum: ['pending', 'approved', 'rejected'] },
         display_name: { bsonType: 'string' },
         phone_number: { bsonType: ['string', 'null'] },
         created_at: { bsonType: 'date' },
@@ -30,6 +31,7 @@ const collections = {
         client_id: { bsonType: 'string' },
         name: { bsonType: 'string' },
         available: { bsonType: 'bool' },
+        approval_status: { enum: ['pending', 'approved', 'rejected'] },
         status: { enum: ['active', 'inactive', 'Online', 'Unavailable'] },
         updated_at: { bsonType: 'date' },
       },
@@ -47,6 +49,7 @@ const collections = {
         phone: { bsonType: 'string' },
         address: { bsonType: 'string' },
         address_proof: { bsonType: 'string' },
+        approval_status: { enum: ['pending', 'approved', 'rejected'] },
         active: { bsonType: 'bool' },
         updated_at: { bsonType: 'date' },
       },
@@ -72,6 +75,7 @@ const collections = {
         registration_expiry: { bsonType: 'date' },
         insurance_expiry: { bsonType: 'date' },
         permit_expiry: { bsonType: 'date' },
+        approval_status: { enum: ['pending', 'approved', 'rejected'] },
         updated_at: { bsonType: 'date' },
       },
     },
@@ -113,6 +117,7 @@ const collections = {
         otpVerifiedAt: { bsonType: 'date' },
         statusHistory: { bsonType: 'array' },
         created: { bsonType: ['date', 'string'] },
+        unaccepted_alerted_at: { bsonType: 'date' },
       },
     },
   },
@@ -198,6 +203,26 @@ const collections = {
       properties: {
         id: { bsonType: 'string' }, client_id: { bsonType: 'string' }, order_id: { bsonType: 'string' }, owner_uid: { bsonType: 'string' }, amount: { bsonType: ['int', 'long', 'double', 'decimal'] },
         status: { enum: ['issued', 'refunded', 'void'] }, created_at: { bsonType: 'date' },
+      },
+    },
+  },
+  support_requests: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'requester_uid', 'requester_role', 'message', 'status', 'created_at', 'updated_at'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        requester_uid: { bsonType: 'string' },
+        requester_role: { enum: ['customer', 'vendor'] },
+        requester_name: { bsonType: 'string' },
+        subject: { bsonType: 'string' },
+        order_id: { bsonType: 'string' },
+        message: { bsonType: 'string' },
+        status: { enum: ['open', 'in-progress', 'resolved'] },
+        resolution: { bsonType: 'string' },
+        created_at: { bsonType: 'date' },
+        updated_at: { bsonType: 'date' },
       },
     },
   },
@@ -300,6 +325,7 @@ const initDatabase = async () => {
     await db.collection('payouts').createIndex({ client_id: 1, vendor_uid: 1, created_at: -1 }, { name: 'vendor_payouts' });
     await db.collection('subscriptions').createIndex({ client_id: 1, owner_uid: 1, status: 1 }, { name: 'customer_subscriptions' });
     await db.collection('invoices').createIndex({ client_id: 1, order_id: 1 }, { unique: true, name: 'order_invoice_unique' });
+    await db.collection('support_requests').createIndex({ client_id: 1, status: 1, updated_at: -1 }, { name: 'support_status_updated' });
     const ordersForHistory = await db.collection('orders').find({}, { projection: { _id: 0, id: 1, client_id: 1, status: 1, owner_uid: 1, statusHistory: 1, created: 1 } }).toArray();
     for (const order of ordersForHistory) {
       if (await db.collection('order_history').countDocuments({ client_id: order.client_id, order_id: order.id })) continue;
@@ -356,6 +382,10 @@ const initDatabase = async () => {
     await db.collection('vendors').updateMany({ status: 'Unavailable' }, { $set: { status: 'inactive' } });
     await db.collection('vendors').updateMany({ status: { $exists: false } }, { $set: { status: 'inactive', available: false, updated_at: new Date() } });
     await db.collection('users').updateMany({ client_id: { $exists: true }, role: 'vendor', status: { $exists: false } }, { $set: { status: 'inactive', available: false, updated_at: new Date() } });
+    await db.collection('users').updateMany({ role: { $in: ['vendor', 'admin'] }, approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
+    await db.collection('vehicles').updateMany({ approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
+    await db.collection('drivers').updateMany({ approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
+    await db.collection('vendors').updateMany({ approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
     await db.collection('content').createIndex({ client_id: 1 }, { unique: true, name: 'client_content_unique' });
     await db.collection('content').updateOne(
       { client_id: 'urban-tanker' },

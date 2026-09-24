@@ -32,10 +32,8 @@ interface AuthResponse {
 let currentUser: LocalUser | null = null;
 const authStateCallbacks: ((user: LocalUser | null) => void)[] = [];
 
-const API_URL = API_BASE_URL;
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
-const RESET_FUNCTION_URL = import.meta.env.VITE_RESET_FUNCTION_URL || 'https://us-central1-urban-tanker-landing.cloudfunctions.net/resetDatabasePassword';
 
 function createUserObject(data: AuthResponse['user'], token: string): LocalUser {
   return {
@@ -61,7 +59,7 @@ function persistUser(user: LocalUser): LocalUser {
 
 async function makeAuthRequest(endpoint: string, body: Record<string, unknown>) {
   try {
-    const response = await fetch(`${API_URL}/api/auth${endpoint}`, {
+    const response = await fetch(`${API_BASE_URL}/api/auth${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -81,15 +79,16 @@ async function makeAuthRequest(endpoint: string, body: Record<string, unknown>) 
   }
 }
 
-export async function signInWithGoogle(role: LocalUser['role'] = 'customer'): Promise<LocalUser> {
+export async function signInWithGoogle(role?: LocalUser['role']): Promise<LocalUser> {
   const result = await signInWithPopup(googleAuth, new GoogleAuthProvider());
   const googleToken = await result.user.getIdToken();
-  const payload = await makeAuthRequest('/google', { clientId: contentClientId, idToken: googleToken, role });
+  const payload = await makeAuthRequest('/google', { clientId: contentClientId, idToken: googleToken, ...(role ? { role } : {}) });
+  if (!payload.idToken) throw new Error(payload.message || 'Your account is awaiting administrator approval.');
   return persistUser(createUserObject(payload.user, payload.idToken));
 }
 
-export async function signInWithPassword(email: string, password: string, role: LocalUser['role']): Promise<LocalUser> {
-  return databaseCredentialAuth('login', email, password, undefined, role);
+export async function signInWithPassword(email: string, password: string): Promise<LocalUser> {
+  return databaseCredentialAuth('login', email, password);
 }
 
 export async function registerWithPassword(
@@ -102,20 +101,21 @@ export async function registerWithPassword(
   return databaseCredentialAuth('register', email, password, displayName, role, phoneNumber);
 }
 
-async function databaseCredentialAuth(action: 'login' | 'register', email: string, password: string, displayName?: string, role: LocalUser['role'] = 'customer', phoneNumber?: string): Promise<LocalUser> {
-  const payload = await makeAuthRequest(action === 'register' ? '/register' : '/login', { clientId: contentClientId, email, password, displayName, phoneNumber, role });
+async function databaseCredentialAuth(action: 'login' | 'register', email: string, password: string, displayName?: string, role?: LocalUser['role'], phoneNumber?: string): Promise<LocalUser> {
+  const payload = await makeAuthRequest(action === 'register' ? '/register' : '/login', { clientId: contentClientId, email, password, ...(action === 'register' ? { displayName, phoneNumber, role: role || 'customer' } : {}) });
+  if (!payload.idToken) throw new Error(payload.message || 'Your account is awaiting administrator approval.');
   return persistUser(createUserObject(payload.user, payload.idToken));
 }
 
 export async function requestPasswordReset(email: string): Promise<string> {
-  const response = await fetch(RESET_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'request', clientId: contentClientId, email}) });
+  const response = await fetch(`${API_BASE_URL}/api/auth/password-reset`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'request', clientId: contentClientId, email}) });
   const payload = await response.json() as {message?: string};
   if (!response.ok) throw new Error(payload.message || 'Unable to request a password reset.');
   return payload.message || 'If the account exists, a reset link has been sent.';
 }
 
 export async function completePasswordReset(email: string, token: string, password: string): Promise<string> {
-  const response = await fetch(RESET_FUNCTION_URL, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'complete', clientId: contentClientId, email, token, password}) });
+  const response = await fetch(`${API_BASE_URL}/api/auth/password-reset`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'complete', clientId: contentClientId, email, token, password}) });
   const payload = await response.json() as {message?: string};
   if (!response.ok) throw new Error(payload.message || 'Unable to reset the password.');
   return payload.message || 'Password reset successfully.';
@@ -126,7 +126,7 @@ export async function signOutUser(): Promise<void> {
   
   if (token) {
     try {
-      await fetch(`${API_URL}/api/auth/logout`, {
+      await fetch(`${API_BASE_URL}/api/auth/logout`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

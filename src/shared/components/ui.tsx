@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import { useState, type ComponentType, type ReactNode } from 'react';
 
 interface PageHeaderProps { eyebrow: string; title: ReactNode; copy: string; action?: ReactNode; }
 interface StatCardProps { icon: ComponentType<{ size?: number }>; label: string; value: ReactNode; detail: string; tone?: string; }
@@ -24,5 +24,6 @@ export function Button({ children, variant = '', onClick, icon: Icon, type = 'bu
 }
 
 export function UserBadge({ initials = 'AM', onClick }: { initials?: string; onClick?: () => void }) {
-  return <button className="avatar" onClick={onClick} aria-label="Sign out and return to login">{initials}</button>;
+  const [open, setOpen] = useState(false);
+  return <div className="user-menu"><button className="avatar" type="button" onClick={() => setOpen(current => !current)} aria-label="Open account menu" aria-expanded={open}>{initials}</button>{open && <div className="user-menu-popover" role="menu"><button type="button" role="menuitem" onClick={() => { setOpen(false); onClick?.(); }}>Sign out</button></div>}</div>;
 }

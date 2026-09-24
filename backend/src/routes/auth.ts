@@ -1,7 +1,7 @@
 import express from 'express';
 import { body, validationResult } from 'express-validator';
 import { sessionsCollection, usersCollection, vendorsCollection } from '../database/connection.js';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { hashPassword, comparePassword, generateToken, hashToken } from '../utils/auth.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -49,6 +49,23 @@ async function createSession(user, token) {
   });
 }
 
+async function notifyMainAdminOfApprovalRequest(user: Record<string, any>): Promise<void> {
+  const adminEmail = process.env.MAIN_ADMIN_EMAIL || process.env.ADMIN_EMAIL;
+  const emailKey = process.env.RESEND_API_KEY;
+  const emailFrom = process.env.MAIL_FROM;
+  if (!adminEmail || !emailKey || !emailFrom) return;
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${emailKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: emailFrom,
+      to: [adminEmail],
+      subject: `Urban Tanker ${user.role} approval request`,
+      html: `<p>A new ${user.role} account is waiting for approval.</p><p><strong>${user.display_name}</strong> · ${user.email}</p><p>Client: ${user.client_id}</p>`,
+    }),
+  });
+}
+
 router.post('/google', async (req, res) => {
   try {
     const { idToken, role } = req.body;
@@ -86,18 +103,22 @@ router.post('/google', async (req, res) => {
         updated_at: now,
         last_login: now,
         client_id: clientId,
-        ...(role === 'vendor' ? { status: 'inactive', available: false } : {}),
+        ...(role === 'vendor' || role === 'admin' ? { status: 'inactive', available: false, approval_status: 'pending' } : { status: 'active', approval_status: 'approved' }),
       };
       await usersCollection.insertOne(user);
       if (user.role === 'vendor') {
         await vendorsCollection.updateOne(
           { uid: user.uid, client_id: clientId },
-          { $set: { uid: user.uid, client_id: clientId, name: user.display_name, email: user.email, phone: user.phone_number, driver: user.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, updated_at: new Date() } },
+          { $set: { uid: user.uid, client_id: clientId, name: user.display_name, email: user.email, phone: user.phone_number, driver: user.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', approval_status: 'pending', available: false, updated_at: new Date() } },
           { upsert: true },
         );
       }
+      if (user.role === 'vendor' || user.role === 'admin') {
+        await notifyMainAdminOfApprovalRequest(user).catch(error => console.error('Approval notification error:', error));
+        return res.status(202).json({ message: `Your ${user.role} account was created and is awaiting administrator approval.` });
+      }
     } else {
-      if (role && user.role !== role) return res.status(403).json({ message: `This account is registered as ${user.role}. Select the matching role.` });
+      if (['vendor', 'admin'].includes(user.role) && user.approval_status !== 'approved' && user.status !== 'active') return res.status(403).json({ message: `Your ${user.role} account is awaiting administrator approval.` });
       await usersCollection.updateOne({ _id: user._id, client_id: clientId }, { $set: { last_login: new Date(), updated_at: new Date() } });
     }
 
@@ -140,7 +161,8 @@ router.post(
 
       // Create user document
       const uid = randomUUID();
-      const userData = {
+        const approvalRequired = role === 'vendor' || role === 'admin';
+        const userData = {
         _id: uid,
         uid,
         email,
@@ -154,16 +176,20 @@ router.post(
         updated_at: new Date(),
         last_login: null,
         client_id: clientId,
-        ...(role === 'vendor' ? { status: 'inactive', available: false } : {}),
+        ...(approvalRequired ? { status: 'inactive', available: false, approval_status: 'pending' } : { status: 'active', approval_status: 'approved' }),
       };
 
       await usersCollection.insertOne(userData);
       if (role === 'vendor') {
         await vendorsCollection.updateOne(
           { uid, client_id: clientId },
-          { $set: { uid, client_id: clientId, name: userData.display_name, email, phone: userData.phone_number, driver: userData.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', available: false, updated_at: new Date() } },
+          { $set: { uid, client_id: clientId, name: userData.display_name, email, phone: userData.phone_number, driver: userData.display_name, zone: '', vehicle: '', capacity: '', status: 'inactive', approval_status: 'pending', available: false, updated_at: new Date() } },
           { upsert: true },
         );
+      }
+      if (approvalRequired) {
+        await notifyMainAdminOfApprovalRequest(userData).catch(error => console.error('Approval notification error:', error));
+        return res.status(202).json({ message: `Your ${role} account was created and is awaiting administrator approval.` });
       }
       const user = userData;
 
@@ -201,7 +227,7 @@ router.post(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { email, password, role } = req.body;
+      const { email, password } = req.body;
       const clientId = typeof req.body.clientId === 'string' && req.body.clientId.trim() ? req.body.clientId.trim() : 'urban-tanker';
 
       // Find user by email
@@ -210,14 +236,14 @@ router.post(
         return res.status(401).json({ message: 'Invalid email or password' });
       }
 
-      if (role && user.role !== role) {
-        return res.status(403).json({ message: `This account is registered as ${user.role}. Select the matching role.` });
-      }
-
       // Verify password
       const validPassword = await comparePassword(password, user.password_hash);
       if (!validPassword) {
         return res.status(401).json({ message: 'Invalid email or password' });
+      }
+
+      if (['vendor', 'admin'].includes(user.role) && user.approval_status !== 'approved' && user.status !== 'active') {
+        return res.status(403).json({ message: `Your ${user.role} account is awaiting administrator approval.` });
       }
 
       // Update last login
@@ -243,6 +269,49 @@ router.post(
     }
   }
 );
+
+router.post('/password-reset', async (req, res) => {
+  try {
+    const action = req.body?.action === 'complete' ? 'complete' : 'request';
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const clientId = typeof req.body?.clientId === 'string' && req.body.clientId.trim() ? req.body.clientId.trim() : 'urban-tanker';
+    if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'A valid email address is required.' });
+
+    if (action === 'request') {
+      const user = await usersCollection.findOne({ email, client_id: clientId }, { projection: { _id: 1, email: 1, display_name: 1 } });
+      if (user) {
+        const token = randomBytes(32).toString('hex');
+        await usersCollection.updateOne(
+          { _id: user._id, client_id: clientId },
+          { $set: { reset_token_hash: hashToken(token), reset_token_expires_at: new Date(Date.now() + 30 * 60 * 1000), updated_at: new Date() } },
+        );
+        const resetBaseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const resetLink = `${resetBaseUrl}/?resetToken=${encodeURIComponent(token)}&resetEmail=${encodeURIComponent(email)}`;
+        const emailKey = process.env.RESEND_API_KEY;
+        const emailFrom = process.env.MAIL_FROM;
+        if (emailKey && emailFrom) {
+          await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${emailKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: emailFrom, to: [email], subject: 'Reset your Urban Tanker password', html: `<p>Hello ${user.display_name || 'there'},</p><p>Use this link to reset your Urban Tanker password. It expires in 30 minutes:</p><p><a href="${resetLink}">Reset password</a></p>` }) });
+        } else if (process.env.NODE_ENV !== 'production') {
+          console.log(`Password reset link for ${email}: ${resetLink}`);
+        }
+      }
+      return res.json({ message: 'If the account exists, a reset link has been sent.' });
+    }
+
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!token || password.length < 8) return res.status(400).json({ message: 'A valid reset token and password of at least 8 characters are required.' });
+    const result = await usersCollection.updateOne(
+      { email, client_id: clientId, reset_token_hash: hashToken(token), reset_token_expires_at: { $gt: new Date() } },
+      { $set: { password_hash: await hashPassword(password), updated_at: new Date() }, $unset: { reset_token_hash: '', reset_token_expires_at: '' } },
+    );
+    if (!result.matchedCount) return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
+    res.json({ message: 'Password reset successfully.' });
+  } catch (error) {
+    console.error('Password reset error:', error);
+    res.status(500).json({ message: 'Unable to reset the password.' });
+  }
+});
 
 /**
  * @route GET /api/auth/me

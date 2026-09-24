@@ -15,7 +15,7 @@ import { WorkspaceSkeleton } from "../../shared/components/LoadingSkeleton";
 import { Pagination } from "../../shared/components/Pagination";
 import { money } from "../../shared/data/demo";
 import { useAppStore } from "../../app/store";
-import { createVendorDriver, createVendorMaintenance, createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorDrivers, loadVendorMaintenance, loadVendorPayouts, loadVendorVehicles, saveDriverAttendance, setVendorAvailability, setVendorDriverStatus, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
+import { createSupportRequest, createVendorMaintenance, createVendorVehicle, deleteVendorVehicle, getVendorAvailability, loadVendorDashboard, loadVendorDrivers, loadVendorMaintenance, loadVendorPayouts, loadVendorVehicles, saveDriverAttendance, setVendorAvailability, setVendorVehicleActive, updateVendorLocation, updateVendorOrder } from "../../shared/lib/cloudStore";
 import { useEffect, useRef, useState, type Dispatch, type FormEvent } from "react";
 import { io, type Socket } from "socket.io-client";
 import { API_BASE_URL } from "../../shared/lib/apiConfig";
@@ -135,6 +135,9 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         const token = getAuthToken();
         if (!token) return undefined;
         const socket: Socket = io(API_BASE_URL, { auth: { token }, transports: ["websocket", "polling"] });
+        socket.on("connect", () => console.info("Vendor Socket.IO connected", socket.id));
+        socket.on("connect_error", error => console.error("Vendor Socket.IO connection failed", error.message));
+        socket.on("disconnect", reason => console.info("Vendor Socket.IO disconnected", reason));
 
         const created = (order: Order & { excludedVendorUids?: string[] }) => {
             const currentUser = getCurrentUser();
@@ -168,10 +171,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         };
     }, []);
     if (initialLoading) return <WorkspaceSkeleton role="vendor" />;
-    const activeAssignedOrder = vendorOrders.find(item => ['Accepted', 'Vendor accepted', 'En route', 'Arrived'].includes(item.status));
     const toggleAvailability = async () => {
         if (availabilityBusy) return;
-        if (available && activeAssignedOrder) { onNotify(`You cannot go offline while order ${activeAssignedOrder.id} is active.`); return; }
         const next = !available;
         setAvailabilityBusy(true);
         try {
@@ -351,8 +352,8 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
                 copy="Accept new bookings quickly, keep the customer updated, and complete delivery with their OTP."
                 action={
                     <div className="heading-actions">
-                        <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy || Boolean(available && activeAssignedOrder)}>
-                            {availabilityBusy ? "Updating..." : available && activeAssignedOrder ? "Active delivery in progress" : available ? "Active for bookings" : "Inactive for bookings"}
+                        <Button variant={available ? "primary" : "quiet"} icon={available ? Check : ShieldCheck} onClick={() => void toggleAvailability()} disabled={availabilityBusy}>
+                        {availabilityBusy ? "Updating..." : available ? "Active for bookings" : "Inactive for bookings"}
                         </Button>
                         <Button variant="quiet" icon={Navigation} onClick={() => void shareLocation()} disabled={operationBusy}>Share location</Button>
                     </div>
@@ -489,26 +490,6 @@ function VendorMaintenanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; on
     return <><PageHeader eyebrow="Vendor workspace · Maintenance" title="Keep the fleet ready." copy="Schedule maintenance work before it interrupts customer deliveries." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)} disabled={!vehicles.length}>Schedule maintenance</Button>} /><div className="order-list">{records.length ? records.map(record => <article className="order-row" key={String(record.id)}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{String(record.description)}</b><Status>{String(record.status)}</Status></div><span>{String(record.scheduled_at)}</span><small>Estimated cost: {String(record.cost || 0)}</small></div></article>) : <div className="empty-state"><Package size={28} /><h3>No maintenance scheduled</h3><p>Schedule service for a vehicle in your fleet.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="maintenance-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close maintenance form">×</button><span className="eyebrow">Fleet maintenance</span><h2 id="maintenance-dialog-title">Schedule maintenance</h2><p className="modal-copy">Keep vehicles ready for the next delivery assignment.</p><form className="auth-form" onSubmit={submit}><label>Vehicle<select value={form.vehicleId} onChange={event => setForm({ ...form, vehicleId: event.target.value })}>{vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.registrationNumber} · {vehicle.capacity || 'Capacity not set'}</option>)}</select></label><label>Scheduled date<input type="date" value={form.scheduledAt} onChange={event => setForm({ ...form, scheduledAt: event.target.value })} required /></label><label>Description<input value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="Service, inspection, repair" required /></label><label>Estimated cost<input type="number" min="0" value={form.cost} onChange={event => setForm({ ...form, cost: event.target.value })} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Schedule maintenance</Button></div></form></section></div>}</>;
 }
 
-function VendorDriversManagementView({ onNotify }: { onNotify: (message: string) => void }) {
-    const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean }>>([]);
-    const [open, setOpen] = useState(false);
-    const [form, setForm] = useState({ name: '', phone: '', address: '' });
-    const refresh = () => void loadVendorDrivers().then(setDrivers).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load drivers.'));
-    useEffect(refresh, [onNotify]);
-    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const name = form.name.trim(); const phone = form.phone.trim(); const address = form.address.trim(); if (name.length < 2) { onNotify('Enter a valid driver name.'); return; } if (!/^[6-9]\d{9}$/.test(phone)) { onNotify('Enter a valid 10-digit Indian mobile number.'); return; } if (address.length < 5) { onNotify('Enter the driver address.'); return; } try { await createVendorDriver({ name, phone, address }); setForm({ name: '', phone: '', address: '' }); setOpen(false); refresh(); onNotify('Driver added to your team.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to create driver.'); } };
-    const toggle = async (driver: typeof drivers[number]) => { try { await setVendorDriverStatus(driver.id, !driver.active); refresh(); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to update driver status.'); } };
-    return <><PageHeader eyebrow="Vendor workspace · Drivers" title="Manage your drivers." copy="Create and manage drivers independently from vehicles. Assign both only when accepting an order." action={<Button variant="primary" icon={Users} onClick={() => setOpen(true)}>Add driver</Button>} /><div className="order-list">{drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>Vehicle assigned during order acceptance</small></div><Button variant={driver.active ? 'quiet' : 'primary'} onClick={() => void toggle(driver)}>{driver.active ? 'Set inactive' : 'Set active'}</Button></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>Add a driver before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="driver-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close driver form">×</button><span className="eyebrow">Driver management</span><h2 id="driver-dialog-title">Add driver</h2><p className="modal-copy">Driver details stay independent from fleet vehicles.</p><form className="auth-form" onSubmit={submit} noValidate><label>Driver name<input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} minLength={2} required /></label><label>Phone number<input value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" pattern="[6-9][0-9]{9}" placeholder="10-digit mobile number" required /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add driver</Button></div></form></section></div>}</>;
-}
-
-function VendorDriversView({ onNotify }: { onNotify: (message: string) => void }) {
-    const [drivers, setDrivers] = useState<Array<{ id: string; name: string; phone: string; active: boolean }>>([]);
-    const [form, setForm] = useState({ name: '', phone: '' });
-    const refresh = () => void loadVendorDrivers().then(setDrivers).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load drivers.'));
-    useEffect(refresh, [onNotify]);
-    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const name = form.name.trim(); const phone = form.phone.trim(); if (name.length < 2) { onNotify('Enter a valid driver name.'); return; } if (!/^[6-9]\d{9}$/.test(phone)) { onNotify('Enter a valid 10-digit Indian mobile number.'); return; } try { await createVendorDriver({ name, phone }); setForm({ name: '', phone: '' }); refresh(); onNotify('Driver added to your team.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to create driver.'); } };
-    const toggle = async (driver: typeof drivers[number]) => { try { await setVendorDriverStatus(driver.id, !driver.active); refresh(); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to update driver status.'); } };
-    return <><PageHeader eyebrow="Vendor workspace · Drivers" title="Manage your drivers." copy="Create and manage drivers independently from vehicles. Assign both only when accepting an order." /><section className="data-surface"><form className="auth-form" onSubmit={submit}><div className="field-row"><label>Driver name<input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required /></label><label>Phone number<input value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value.replace(/\D/g, '').slice(0, 10) })} inputMode="numeric" placeholder="10-digit mobile number" /></label></div><Button variant="primary" type="submit">Add driver</Button></form></section><section className="data-surface"><div className="section-heading"><div><span className="eyebrow">Driver team</span><h2>{drivers.length} drivers</h2></div></div>{drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span></div><Button variant={driver.active ? 'quiet' : 'primary'} onClick={() => void toggle(driver)}>{driver.active ? 'Set inactive' : 'Set active'}</Button></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>Add drivers separately from your vehicles.</p></div>}</section></>;
-}
 
 function VendorAttendanceView({ drivers, onNotify }: { drivers: Array<{ id: string; name: string; phone: string; active: boolean }>; onNotify: (message: string) => void }) {
     const [form, setForm] = useState({ driverId: drivers[0]?.id || '', date: new Date().toISOString().slice(0, 10), status: 'present', notes: '' });
@@ -593,49 +574,6 @@ function VehicleFleetManagementView({ vehicles, setVehicles, onNotify }: { vehic
     return <><PageHeader eyebrow="Vendor workspace · Fleet" title="Manage your vehicles." copy="Add vehicles independently. Assign a driver only when accepting an order." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)}>Add vehicle</Button>} /><div className="order-list">{vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>{vehicle.driverName ? `Assigned driver: ${vehicle.driverName}` : 'No driver assigned'}</small></div><Button variant={vehicle.active ? 'quiet' : 'primary'} onClick={() => void setVendorVehicleActive(vehicle.id, !vehicle.active).then(() => setVehicles(items => items.map(item => item.id === vehicle.id ? { ...item, active: !vehicle.active } : item))).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to update vehicle.'))}>{vehicle.active ? 'Set inactive' : 'Set active'}</Button><Button variant="quiet" onClick={() => void remove(vehicle)}>Delete</Button></article>) : <div className="empty-state"><Package size={28} /><h3>No vehicles yet</h3><p>Add a vehicle before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close vehicle form">×</button><span className="eyebrow">Fleet management</span><h2 id="vehicle-dialog-title">Add vehicle</h2><form className="auth-form" onSubmit={submit} noValidate><label>Registration number<input value={form.registrationNumber} onChange={event => setForm({ ...form, registrationNumber: event.target.value.toUpperCase() })} placeholder="TN12 AB 9847" pattern="[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}" required /><small>State code (2 letters) - RTO number (2 digits) - 2 letters - vehicle number (4 digits).</small></label><label>Vehicle type<select value={form.vehicleType} onChange={event => setForm({ ...form, vehicleType: event.target.value })} required><option value="">Select vehicle type</option><option>Tanker</option><option>Water tanker</option><option>Sewage tanker</option></select></label><label>Capacity<input value={form.capacity} onChange={event => setForm({ ...form, capacity: event.target.value })} placeholder="6 KL" /></label><label>Vehicle image <small>(optional)</small><input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2_000_000) { onNotify('Vehicle image must be smaller than 2 MB.'); return; } void compressImage(file).then(imageUrl => setForm(current => ({ ...current, imageUrl }))).catch(() => onNotify('Unable to process vehicle image.')); }} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add vehicle</Button></div></form></section></div>}</>;
 }
 
-function VehicleFleetView({ vehicles, setVehicles, onNotify }: { vehicles: Vehicle[]; setVehicles: Dispatch<React.SetStateAction<Vehicle[]>>; onNotify: (message: string) => void }) {
-    const [open, setOpen] = useState(false);
-    const [form, setForm] = useState({ registrationNumber: "", vehicleType: "Tanker", capacity: "", driverName: "Assigned driver", driverPhone: "", imageUrl: "" });
-    useEffect(() => {
-        if (!open) return;
-        const registrationInput = document.querySelector<HTMLInputElement>('.modal[aria-labelledby="vehicle-dialog-title"] input');
-        if (registrationInput) {
-            registrationInput.placeholder = 'TN12 AB 9847';
-            registrationInput.title = 'Format: State code (2 letters) - RTO number (2 digits) - 2 letters - vehicle number (4 digits).';
-            registrationInput.pattern = '^[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}$';
-            const uppercase = () => {
-                const start = registrationInput.selectionStart;
-                const value = registrationInput.value.toUpperCase();
-                if (registrationInput.value !== value) registrationInput.value = value;
-                if (start !== null) registrationInput.setSelectionRange(start, start);
-            };
-            registrationInput.addEventListener('input', uppercase);
-            return () => registrationInput.removeEventListener('input', uppercase);
-        }
-    }, [open]);
-    useEffect(() => {
-        if (!open) return;
-        const formElement = document.querySelector<HTMLFormElement>('.modal[aria-labelledby="vehicle-dialog-title"] form');
-        if (!formElement) return;
-        const validate = (event: Event) => {
-            const inputs = formElement.querySelectorAll<HTMLInputElement>('input');
-            const registration = inputs[0]?.value.trim().toUpperCase() || '';
-            const vehicleType = inputs[1]?.value.trim() || '';
-            const capacity = inputs[2]?.value.trim() || '';
-            if (!/^[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}$/.test(registration)) { event.preventDefault(); onNotify('Use registration format: TN12 AB 9847.'); return; }
-            if (!vehicleType) { event.preventDefault(); onNotify('Enter the vehicle type.'); return; }
-            if (capacity && !/^\d+(?:\.\d+)?\s?KL$/i.test(capacity)) { event.preventDefault(); onNotify('Capacity must look like 6 KL or 12 KL.'); }
-        };
-        formElement.addEventListener('submit', validate);
-        return () => formElement.removeEventListener('submit', validate);
-    }, [open, onNotify]);
-    const addVehicle = async (event: FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-        try { const vehicle = await createVendorVehicle({ ...form, registrationNumber: form.registrationNumber.trim().toUpperCase(), driverName: form.driverName.trim() || "Assigned driver" }); setVehicles(items => [vehicle, ...items]); setForm({ registrationNumber: "", vehicleType: "Tanker", capacity: "", driverName: "Assigned driver", driverPhone: "", imageUrl: "" }); setOpen(false); onNotify("Vehicle and driver added to your fleet."); } catch (error) { onNotify(error instanceof Error ? error.message : "Unable to add vehicle."); }
-    };
-    return <><PageHeader eyebrow="Vendor workspace · Fleet" title="Manage your vehicles." copy="Add, activate, deactivate, or remove the vehicles available for delivery assignments." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)}>Add vehicle</Button>} /><div className="order-list">{vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}>{vehicle.imageUrl ? <img className="vehicle-thumb" src={vehicle.imageUrl} alt="" /> : <div className="order-service-icon"><Package size={19} /></div>}<div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? "Active" : "Inactive"}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || "Capacity not set"}</span></div><Button variant={vehicle.active ? "quiet" : "primary"} onClick={() => void setVendorVehicleActive(vehicle.id, !vehicle.active).then(() => setVehicles(items => items.map(item => item.id === vehicle.id ? { ...item, active: !vehicle.active } : item))).catch(error => onNotify(error instanceof Error ? error.message : "Unable to update vehicle."))}>{vehicle.active ? "Set inactive" : "Set active"}</Button><Button variant="quiet" onClick={() => void deleteVendorVehicle(vehicle.id).then(() => setVehicles(items => items.filter(item => item.id !== vehicle.id))).catch(error => onNotify(error instanceof Error ? error.message : "Unable to delete vehicle."))}>Delete</Button></article>) : <div className="empty-state"><Package size={28} /><h3>No vehicles yet</h3><p>Add a vehicle before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close vehicle form">×</button><span className="eyebrow">Fleet management</span><h2 id="vehicle-dialog-title">Add vehicle</h2><form className="auth-form" onSubmit={addVehicle}><label>Registration number<input value={form.registrationNumber} onChange={event => setForm({ ...form, registrationNumber: event.target.value })} required /></label><label>Vehicle type<input value={form.vehicleType} onChange={event => setForm({ ...form, vehicleType: event.target.value })} required /></label><label>Capacity<input value={form.capacity} onChange={event => setForm({ ...form, capacity: event.target.value })} /></label><label>Vehicle image <small>(optional)</small><input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2_000_000) { onNotify("Vehicle image must be smaller than 2 MB."); return; } const reader = new FileReader(); reader.onload = () => setForm(current => ({ ...current, imageUrl: String(reader.result || "") })); reader.readAsDataURL(file); }} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add vehicle</Button></div></form></section></div>}</>;
-}
-
 function VendorOrdersView({ orders }: { orders: AppData["orders"] }) {
     const [filter, setFilter] = useState<"all" | "accepted" | "rejected" | "delivered">("all");
     const [page, setPage] = useState(1);
@@ -668,9 +606,21 @@ function VendorTrackingView({ order, orders }: { order?: Order; orders: AppData[
 }
 
 function VendorSupportView({ onNotify }: { onNotify: (message: string) => void }) {
+    const [open, setOpen] = useState(false);
+    const [subject, setSubject] = useState('Vendor support request');
+    const [requestType, setRequestType] = useState('Vehicle approval');
+    const [orderId, setOrderId] = useState('');
+    const [message, setMessage] = useState('');
+    const [busy, setBusy] = useState(false);
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setBusy(true);
+        try { await createSupportRequest({ subject: `${requestType}: ${subject}`, message, orderId: orderId.trim() || undefined }); setMessage(''); setOrderId(''); setOpen(false); onNotify('Support request sent to the operations team.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to send support request.'); } finally { setBusy(false); }
+    };
     return <>
         <PageHeader eyebrow="Vendor workspace · Help" title="How can operations help?" copy="Contact dispatch about assignments, customer access, payments, or delivery issues." />
-        <section className="data-surface support-surface"><h2>Vendor support</h2><p>Include the order ID when contacting dispatch so the operations team can respond quickly.</p><Button variant="primary" icon={Phone} onClick={() => onNotify("Dispatch support request opened")}>Contact dispatch</Button></section>
+        <section className="data-surface support-surface"><h2>Vendor support</h2><p>Send a request to the operations team and track its resolution from dispatch.</p><Button variant="primary" icon={Phone} onClick={() => setOpen(true)}>Contact dispatch</Button></section>
+        {open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="vendor-support-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close support request">×</button><span className="eyebrow">Vendor support</span><h2 id="vendor-support-title">Open a support request.</h2><form className="auth-form" onSubmit={submit}><label>Request type<select value={requestType} onChange={event => setRequestType(event.target.value)}><option>Vehicle approval</option><option>Driver approval</option><option>Order support</option><option>General support</option></select></label><label>Order ID (optional)<input value={orderId} onChange={event => setOrderId(event.target.value)} placeholder="Order ID" /></label><label>Subject<input value={subject} onChange={event => setSubject(event.target.value)} required /></label><label>Message<textarea value={message} onChange={event => setMessage(event.target.value)} rows={5} required /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit" disabled={busy}>{busy ? 'Sending...' : 'Send request'}</Button></div></form></section></div>}
     </>;
 }
 

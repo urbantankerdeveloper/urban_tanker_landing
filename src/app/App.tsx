@@ -31,8 +31,10 @@ export function App() {
     if (active !== 'book') return;
     const dateInput = document.querySelector<HTMLInputElement>('.booking-layout .field-row input');
     if (!dateInput) return;
+    const today = new Date().toISOString().slice(0, 10);
     dateInput.type = 'date';
-    dateInput.min = new Date().toISOString().slice(0, 10);
+    dateInput.min = today;
+    dateInput.max = '';
     dateInput.required = true;
   }, [active]);
 

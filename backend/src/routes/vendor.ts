@@ -36,7 +36,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
       const registrationExpiry = parseExpiry(req.body.registrationExpiry);
       const insuranceExpiry = parseExpiry(req.body.insuranceExpiry);
       const permitExpiry = parseExpiry(req.body.permitExpiry);
-      const vehicle = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}), ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}), ...(permitExpiry ? { permit_expiry: permitExpiry } : {}), active: false, updated_at: new Date() };
+      const vehicle = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, registration_number: registrationNumber, vehicle_type: vehicleType, capacity, image_url: imageUrl, ...(registrationExpiry ? { registration_expiry: registrationExpiry } : {}), ...(insuranceExpiry ? { insurance_expiry: insuranceExpiry } : {}), ...(permitExpiry ? { permit_expiry: permitExpiry } : {}), active: false, approval_status: 'pending', updated_at: new Date() };
       await vehiclesCollection.insertOne(vehicle);
       res.status(201).json({ vehicle });
     } catch (error) {
@@ -59,7 +59,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     const address = String(req.body.address || '').trim();
     const addressProof = typeof req.body.addressProof === 'string' && req.body.addressProof.length <= 3_000_000 ? req.body.addressProof : '';
     if (!name || !address) return res.status(400).json({ message: 'Driver name and address are required.' });
-    const driver = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, name, phone, address, address_proof: addressProof, active: false, updated_at: new Date() };
+    const driver = { id: deps.randomUUID(), client_id: req.user.clientId, vendor_uid: req.user.uid, name, phone, address, address_proof: addressProof, active: false, approval_status: 'pending', updated_at: new Date() };
     await driversCollection.insertOne(driver);
     res.status(201).json({ driver });
   });
@@ -67,7 +67,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
   app.patch('/api/vendor/drivers/:driverId/status', deps.authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const active = req.body.active === true;
-    const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { $set: { active, updated_at: new Date() } });
+    const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, approval_status: 'approved' }, { $set: { active, updated_at: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ message: 'Driver was not found.' });
     res.json({ id: req.params.driverId, active });
   });
@@ -85,6 +85,9 @@ export function registerVendorRoutes(app: Express, deps: any) {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const active = Boolean(req.body.active);
     const update: Record<string, any> = { active, updated_at: new Date() };
+    const existingVehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { approval_status: 1 } });
+    if (!existingVehicle) return res.status(404).json({ message: 'Vehicle was not found.' });
+    if (existingVehicle.approval_status !== 'approved') return res.status(403).json({ message: 'This vehicle is awaiting administrator approval.' });
     if (typeof req.body.driverActive === 'boolean') update.driver_active = req.body.driverActive;
     const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1 } });
     if (!vehicle) return res.status(404).json({ message: 'Vehicle was not found.' });
@@ -114,12 +117,10 @@ export function registerVendorRoutes(app: Express, deps: any) {
   app.patch('/api/vendor/availability', deps.authenticateToken, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
+      const account = await usersCollection.findOne({ uid: req.user.uid, client_id: req.user.clientId, role: 'vendor' }, { projection: { approval_status: 1, status: 1 } });
+      if (account?.approval_status !== 'approved' && account?.status !== 'active') return res.status(403).json({ message: 'Your vendor account is awaiting administrator approval.' });
       const status = req.body.status === 'active' || req.body.available === true ? 'active' : 'inactive';
       const available = status === 'active';
-      if (!available) {
-        const activeOrder = await ordersCollection.findOne({ client_id: req.user.clientId, assigned_vendor_uid: req.user.uid, status: { $in: ['Accepted', 'Vendor accepted', 'En route', 'Arrived'] } }, { projection: { _id: 0, id: 1 } });
-        if (activeOrder) return res.status(409).json({ message: `You cannot go offline while order ${activeOrder.id} is active.` });
-      }
       await vendorsCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId }, { $set: { available, status, updated_at: new Date() }, $setOnInsert: { uid: req.user.uid, client_id: req.user.clientId, name: req.user.displayName || 'Vendor', email: req.user.email || '', phone: req.user.phoneNumber || null, driver: req.user.displayName || 'Vendor', zone: '', vehicle: '', capacity: '', rating: '' } }, { upsert: true });
       await usersCollection.updateOne({ uid: req.user.uid, client_id: req.user.clientId, role: 'vendor' }, { $set: { status, available, updated_at: new Date() } });
       res.json({ available, status });

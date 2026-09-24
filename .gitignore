@@ -9,3 +9,4 @@ atlas-credentials.env
 .build-validation/*
 dist/
 firebase-dist/
+.env.local

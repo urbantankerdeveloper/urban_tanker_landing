@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { getCurrentUser } from '../../features/auth/auth';
 import { API_BASE_URL } from './apiConfig';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent, saveEncryptedState } from './secureCache';
@@ -26,15 +25,32 @@ export interface UserProfile extends Profile {
 }
 
 export const contentClientId = import.meta.env.VITE_CONTENT_CLIENT_ID || 'urban-tanker';
+const contentRequests = new Map<string, Promise<CloudState>>();
+const contentValues = new Map<string, CloudState>();
 
 type Unsubscribe = () => void;
 
 export async function subscribeToContent(clientId: string, onContent: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
-  const apiUrl = API_BASE_URL;
   try {
-    const response = await fetch(`${apiUrl}/api/content/${encodeURIComponent(clientId)}`);
-    if (!response.ok) throw new Error('Content configuration request failed.');
-    const content = await response.json() as CloudState;
+    const cachedContent = contentValues.get(clientId);
+    const request = cachedContent
+      ? Promise.resolve(cachedContent)
+      : contentRequests.get(clientId) || (() => {
+        const promise = fetch(`${API_BASE_URL}/api/content/${encodeURIComponent(clientId)}`)
+          .then(async response => {
+            if (!response.ok) throw new Error('Content configuration request failed.');
+            const content = await response.json() as CloudState;
+            contentValues.set(clientId, content);
+            return content;
+          })
+          .catch(error => {
+            contentRequests.delete(clientId);
+            throw error;
+          });
+        contentRequests.set(clientId, promise);
+        return promise;
+      })();
+    const content = await request;
     onContent(content);
     await saveEncryptedContent(clientId, content);
   } catch (error) {
@@ -72,6 +88,46 @@ export async function markNotificationsRead(notificationIds: string[]): Promise<
   const user = getCurrentUser();
   if (!user || !notificationIds.length) return;
   await Promise.all(notificationIds.map(notificationId => fetch(`${API_BASE_URL}/api/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'PATCH', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } })));
+}
+
+export interface SupportRequest {
+  id: string;
+  requester_uid: string;
+  requester_role: 'customer' | 'vendor';
+  requester_name: string;
+  subject: string;
+  order_id?: string;
+  message: string;
+  status: 'open' | 'in-progress' | 'resolved';
+  resolution?: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+export async function createSupportRequest(input: { subject: string; message: string; orderId?: string }): Promise<SupportRequest> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/support/requests`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { request?: SupportRequest; message?: string };
+  if (!response.ok || !payload.request) throw new Error(payload.message || 'Unable to create support request.');
+  return payload.request;
+}
+
+export async function loadSupportRequests(): Promise<SupportRequest[]> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/support/requests`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, cache: 'no-store' });
+  const payload = await response.json().catch(() => ({})) as { requests?: SupportRequest[]; message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to load support requests.');
+  return payload.requests || [];
+}
+
+export async function updateSupportRequest(requestId: string, status: SupportRequest['status'], resolution: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/support/requests/${encodeURIComponent(requestId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ status, resolution }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update support request.');
 }
 
 export async function subscribeToCloudState(onState: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
@@ -294,11 +350,11 @@ export async function loadAdminVendorDrivers(vendorUid: string): Promise<Array<{
   return (payload.drivers || []).map(driver => ({ id: driver.id, name: driver.name, phone: driver.phone || '', active: driver.active }));
 }
 
-export async function loadAdminVehicles(): Promise<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean; vendorUid: string; vendorName: string }>> {
+export async function loadAdminVehicles(): Promise<Array<{ id: string; registrationNumber: string; vehicleType: string; capacity: string; active: boolean; approvalStatus: string; vendorUid: string; vendorName: string }>> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/admin/vehicles`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
-  const payload = await response.json().catch(() => ({})) as { vehicles?: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; vendor_uid?: string; vendor_name?: string; image_url?: string }>; message?: string };
+  const payload = await response.json().catch(() => ({})) as { vehicles?: Array<{ id: string; registration_number: string; vehicle_type: string; capacity?: string; active: boolean; approval_status?: string; vendor_uid?: string; vendor_name?: string; image_url?: string }>; message?: string };
   if (!response.ok) throw new Error(payload.message || 'Unable to load vehicles.');
   return (payload.vehicles || []).map(vehicle => ({
     id: vehicle.id,
@@ -306,25 +362,43 @@ export async function loadAdminVehicles(): Promise<Array<{ id: string; registrat
     vehicleType: vehicle.vehicle_type,
     capacity: vehicle.capacity || '',
     active: vehicle.active,
+    approvalStatus: vehicle.approval_status || (vehicle.active ? 'approved' : 'pending'),
     vendorUid: vehicle.vendor_uid || '',
     vendorName: vehicle.vendor_name || 'Unknown vendor',
   }));
 }
 
-export async function loadAdminDrivers(): Promise<Array<{ id: string; name: string; phone: string; active: boolean; vendorUid: string; vendorName: string }>> {
+export async function loadAdminDrivers(): Promise<Array<{ id: string; name: string; phone: string; active: boolean; approvalStatus: string; vendorUid: string; vendorName: string }>> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/admin/drivers`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
-  const payload = await response.json().catch(() => ({})) as { drivers?: Array<{ id: string; name: string; phone?: string; active: boolean; vendor_uid?: string; vendor_name?: string }>; message?: string };
+  const payload = await response.json().catch(() => ({})) as { drivers?: Array<{ id: string; name: string; phone?: string; active: boolean; approval_status?: string; vendor_uid?: string; vendor_name?: string }>; message?: string };
   if (!response.ok) throw new Error(payload.message || 'Unable to load drivers.');
   return (payload.drivers || []).map(driver => ({
     id: driver.id,
     name: driver.name,
     phone: driver.phone || '',
     active: driver.active,
+    approvalStatus: driver.approval_status || (driver.active ? 'approved' : 'pending'),
     vendorUid: driver.vendor_uid || '',
     vendorName: driver.vendor_name || 'Unknown vendor',
   }));
+}
+
+export async function approveAdminVehicle(vehicleId: string, approved: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vehicles/${encodeURIComponent(vehicleId)}/approval`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ approved }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update vehicle approval.');
+}
+
+export async function approveAdminDriver(driverId: string, approved: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/drivers/${encodeURIComponent(driverId)}/approval`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ approved }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update driver approval.');
 }
 
 export async function setVendorDriverStatus(driverId: string, active: boolean): Promise<void> {

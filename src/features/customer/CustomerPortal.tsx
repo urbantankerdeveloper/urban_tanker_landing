@@ -2,7 +2,7 @@ import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupe
 import { money } from '../../shared/data/demo';
 import type { AppData, BookingDraft, Order, Workspace } from '../../shared/lib/types';
 import { useAppStore } from '../../app/store';
-import { cancelCustomerOrder, createCustomerSubscription, loadCustomerInvoices, loadCustomerOrders, loadCustomerSubscriptions, rateCustomerOrder, rescheduleCustomerOrder } from '../../shared/lib/cloudStore';
+import { cancelCustomerOrder, createCustomerSubscription, createSupportRequest, loadCustomerInvoices, loadCustomerOrders, loadCustomerSubscriptions, rateCustomerOrder, rescheduleCustomerOrder } from '../../shared/lib/cloudStore';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import { LiveMapModal } from '../../shared/components/LiveMapModal';
@@ -47,7 +47,8 @@ export function CustomerPortal() {
   const rescheduleOrder = async (orderId: string, scheduledDate: string, scheduledSlot: string) => { try { await rescheduleCustomerOrder(orderId, scheduledDate, scheduledSlot); const orders = await loadCustomerOrders(); useAppStore.setState(state => ({ data: { ...state.data, orders } })); onNotify('Order rescheduled successfully.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to reschedule the order.'); } };
   const rateOrder = async (orderId: string) => { const rating = Number(window.prompt('Rate this delivery from 1 to 5:')); if (!Number.isInteger(rating) || rating < 1 || rating > 5) return; const feedback = window.prompt('Optional feedback:') || ''; try { await rateCustomerOrder(orderId, rating, feedback); const orders = await loadCustomerOrders(); useAppStore.setState(state => ({ data: { ...state.data, orders } })); onNotify('Thank you for your feedback.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to save feedback.'); } };
   if (ordersLoading) return <WorkspaceSkeleton role="customer" />;
-  const content = active === 'book' ? <BookingFormWithSavedAddresses booking={booking} set={set} onSubmit={submitBooking} /> : active === 'orders' ? <OrdersView orders={data.orders} onCancel={cancelOrder} onReschedule={rescheduleOrder} onRate={rateOrder} /> : active === 'track' ? <TrackingView order={activeOrder} /> : active === 'subscriptions' ? <SubscriptionsView onNotify={onNotify} /> : active === 'invoices' ? <InvoiceHistoryView onNotify={onNotify} /> : active === 'support' ? <SupportView data={data} onNotify={onNotify} /> : <CustomerLanding order={activeOrder} data={data} onNavigate={onNavigate} />;
+  const selectServiceAndBook = (service: BookingDraft['service']) => { set('service', service); onNavigate('book'); };
+  const content = active === 'book' ? <BookingFormWithSavedAddresses booking={booking} set={set} onSubmit={submitBooking} /> : active === 'orders' ? <OrdersView orders={data.orders} onCancel={cancelOrder} onReschedule={rescheduleOrder} onRate={rateOrder} /> : active === 'track' ? <TrackingView order={activeOrder} /> : active === 'subscriptions' ? <SubscriptionsView onNotify={onNotify} /> : active === 'invoices' ? <InvoiceHistoryView onNotify={onNotify} /> : active === 'support' ? <SupportView data={data} onNotify={onNotify} /> : <CustomerLanding order={activeOrder} data={data} onNavigate={onNavigate} onSelectService={selectServiceAndBook} />;
   return <>{content}{active === 'orders' && <DeliveryProofGallery orders={data.orders} />}{acceptedOrder && <CustomerAcceptanceModal orderId={acceptedOrder.orderId} vendorName={acceptedOrder.vendorName} onClose={() => setAcceptedOrder(null)} onTrack={() => { setAcceptedOrder(null); onNavigate('track'); }} />}</>;
 }
 
@@ -146,13 +147,17 @@ function SupportView({ data, onNotify }: { data: AppData; onNotify: (message: st
   const [orderId, setOrderId] = useState(activeOrder?.id || '');
   const [message, setMessage] = useState('');
 
-  const submitRequest = (event: FormEvent<HTMLFormElement>) => {
+  const submitRequest = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const subject = `Urban Tanker support request${orderId ? ` · ${orderId}` : ''}`;
     const body = `Name: ${name}\nOrder ID: ${orderId}\n\n${message}`;
-    window.location.href = `mailto:support@urbantanker.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    setOpen(false);
-    onNotify('Your support email draft is ready to send.');
+    try {
+      await createSupportRequest({ subject, message: body, orderId: orderId || undefined });
+      setOpen(false);
+      onNotify('Support request sent to the operations team.');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Unable to send support request.');
+    }
   };
 
   return <><PageHeader eyebrow="Customer support" title="How can we help?" copy="Our Chennai team is available for bookings, payments, tanker access, and account questions." /><div className="support-grid"><div className="support-card"><MessageSquare size={22} /><h3>Message support</h3><p>Describe the issue and include your order ID. We usually respond within 15 minutes.</p><Button variant="primary" icon={ArrowRight} onClick={() => setOpen(true)}>Start a request</Button></div><div className="support-card"><Phone size={22} /><h3>Call dispatch</h3><p>For an active delivery, connect directly with our operations desk.</p><Button variant="quiet" icon={Phone} onClick={() => onNotify('Calling dispatch is available in production mode')}>+91 44 4012 2200</Button></div></div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal support-dialog" role="dialog" aria-modal="true" aria-labelledby="support-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close support request"><X size={18} /></button><span className="eyebrow">Customer support</span><h2 id="support-title">Send us a message.</h2><p className="modal-copy">We will open your email client with the request details ready to send.</p><form className="support-form" onSubmit={submitRequest}><label htmlFor="support-name">Name<input id="support-name" value={name} onChange={event => setName(event.target.value)} autoComplete="name" required /></label><label htmlFor="support-order">Order ID (optional)<input id="support-order" value={orderId} onChange={event => setOrderId(event.target.value)} placeholder="Order ID" /></label><label htmlFor="support-message">Message<textarea id="support-message" value={message} onChange={event => setMessage(event.target.value)} rows={5} placeholder="Tell us how we can help" required /></label><Button variant="primary full" type="submit">Submit request <ArrowRight size={16} /></Button></form></section></div>}</>;
