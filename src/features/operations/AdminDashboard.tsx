@@ -90,6 +90,55 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   useEffect(() => {
     void refreshDashboard();
   }, [notify]);
+
+  // Set up background data refresh worker
+  const authToken = getAuthToken();
+  useEffect(() => {
+    if (!('Worker' in window)) return;
+
+    if (!authToken) return; // Don't start worker if no token (logged out)
+
+    const refreshIntervalMinutes = Number(import.meta.env.VITE_DASHBOARD_REFRESH_INTERVAL_MINUTES || 10);
+    const worker = new Worker(new URL('../../shared/workers/dashboardRefreshWorker.ts', import.meta.url), { type: 'module' });
+    
+    worker.onmessage = (event: MessageEvent) => {
+      const { status, data: newData, error } = event.data;
+      
+      if (status === 'updated' && newData) {
+        setDashboard(newData);
+        useAppStore.setState(state => ({ 
+          data: { 
+            ...state.data, 
+            orders: newData.orders || state.data.orders, 
+            vendors: newData.vendors || state.data.vendors 
+          } 
+        }));
+      } else if (status === 'error') {
+        console.error('Dashboard refresh worker error:', error);
+      }
+    };
+
+    worker.onerror = (error) => {
+      console.error('Dashboard refresh worker fatal error:', error);
+      worker.terminate();
+    };
+
+    // Start the worker with configuration
+    worker.postMessage({
+      action: 'start',
+      config: {
+        intervalMinutes: refreshIntervalMinutes,
+        token: authToken,
+        apiBaseUrl: API_BASE_URL,
+      },
+    });
+
+    // Cleanup on unmount or token change (logout)
+    return () => {
+      worker.postMessage({ action: 'stop' });
+      worker.terminate();
+    };
+  }, [authToken]);
   const filteredOrders = data.orders.filter(order => `${order.id} ${order.customer} ${order.address}`.toLowerCase().includes(adminQuery.toLowerCase()));
   const pagedOrders = filteredOrders.slice((ordersPage - 1) * 10, ordersPage * 10);
   const revenue = dashboard?.revenue ?? data.orders.filter(order => order.status === 'Delivered').reduce((total, order) => total + order.amount, 0);

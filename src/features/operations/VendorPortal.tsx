@@ -119,7 +119,7 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
         void refreshDashboard().catch(() => {
             getVendorAvailability().then(setAvailable).catch(() => undefined);
         });
-        const refreshTimer = window.setInterval(() => { void refreshDashboard().catch(() => undefined); }, 10000);
+        
         void loadVendorVehicles().then(items => {
             const activeVehicle = items.find(item => item.active && item.driverActive);
             setVehicles(items);
@@ -129,8 +129,49 @@ export function VendorPortal({ view = "overview" }: { view?: Workspace }) {
             setAcceptDriverId(activeVehicle?.driverId || items[0]?.driverId || "");
         }).catch(() => undefined);
         void loadVendorDrivers().then(setDrivers).catch(() => undefined);
-        return () => window.clearInterval(refreshTimer);
     }, [data.profile?.name, setStage]);
+
+    // Set up background vendor data refresh worker
+    const vendorAuthToken = getAuthToken();
+    useEffect(() => {
+        if (!('Worker' in window)) return;
+        if (!vendorAuthToken) return; // Don't start worker if no token (logged out)
+
+        const refreshIntervalMinutes = Number(import.meta.env.VITE_DASHBOARD_REFRESH_INTERVAL_MINUTES || 10);
+        const worker = new Worker(new URL('../../shared/workers/vendorRefreshWorker.ts', import.meta.url), { type: 'module' });
+        
+        worker.onmessage = (event: MessageEvent) => {
+            const { status, data: newData } = event.data;
+            
+            if (status === 'updated' && newData) {
+                setAvailable(newData.vendor?.status === "active" || newData.vendor?.available === true);
+                setVendorName(newData.vendor?.name || data.profile?.name || "Vendor");
+                setVendorOrders(newData.orders || []);
+                useAppStore.setState(state => ({ data: { ...state.data, orders: newData.orders || [] } }));
+            }
+        };
+        
+        worker.onerror = (error) => {
+            console.error('Vendor refresh worker error:', error);
+            worker.terminate();
+        };
+        
+        // Start the worker
+        worker.postMessage({
+            action: 'start',
+            config: {
+                intervalMinutes: refreshIntervalMinutes,
+                token: vendorAuthToken,
+                apiBaseUrl: API_BASE_URL,
+            },
+        });
+        
+        // Cleanup on unmount or token change (logout)
+        return () => {
+            worker.postMessage({ action: 'stop' });
+            worker.terminate();
+        };
+    }, [vendorAuthToken]);
     useEffect(() => {
         const token = getAuthToken();
         if (!token) return undefined;
