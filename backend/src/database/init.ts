@@ -1,5 +1,7 @@
 import { getDatabase } from './connection.js';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 const collections = {
   users: {
@@ -34,6 +36,16 @@ const collections = {
         approval_status: { enum: ['pending', 'approved', 'rejected'] },
         status: { enum: ['active', 'inactive', 'Online', 'Unavailable'] },
         updated_at: { bsonType: 'date' },
+        email: { bsonType: 'string' },
+        phone: { bsonType: ['string', 'null'] },
+        driver: { bsonType: 'string' },
+        zone: { bsonType: 'string' },
+        vehicle: { bsonType: 'string' },
+        capacity: { bsonType: 'string' },
+        rating: { bsonType: ['int', 'long', 'double'] },
+        latitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        longitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        location_updated_at: { bsonType: 'date' },
       },
     },
   },
@@ -117,6 +129,19 @@ const collections = {
         otpVerifiedAt: { bsonType: 'date' },
         statusHistory: { bsonType: 'array' },
         created: { bsonType: ['date', 'string'] },
+        updated_at: { bsonType: 'date' },
+        assigned_vendor_uid: { bsonType: 'string' },
+        vendor: { bsonType: 'string' },
+        vendorEmail: { bsonType: 'string' },
+        vendorPhone: { bsonType: ['string', 'null'] },
+        vendorAcceptedAt: { bsonType: 'date' },
+        vendorRejectedAt: { bsonType: 'date' },
+        vendorRejectionReason: { bsonType: 'string' },
+        eta: { bsonType: 'string' },
+        vendorLatitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        vendorLongitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        lastLocationUpdatedAt: { bsonType: 'date' },
+        rejectedVendorUids: { bsonType: 'array' },
         unaccepted_alerted_at: { bsonType: 'date' },
       },
     },
@@ -226,27 +251,31 @@ const collections = {
       },
     },
   },
+  coupons: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'code', 'label', 'discount', 'active', 'created_at', 'updated_at'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        code: { bsonType: 'string' },
+        label: { bsonType: 'string' },
+        discount: { bsonType: ['int', 'long', 'double', 'decimal'] },
+        service: { bsonType: ['string', 'null'] },
+        firstBooking: { bsonType: 'bool' },
+        active: { bsonType: 'bool' },
+        created_at: { bsonType: 'date' },
+        updated_at: { bsonType: 'date' },
+      },
+    },
+  },
   content: {
     $jsonSchema: {
       bsonType: 'object',
-      required: ['client_id', 'config', 'coupons', 'updated_at'],
+      required: ['client_id', 'config', 'updated_at'],
       properties: {
         client_id: { bsonType: 'string' },
         config: { bsonType: 'object' },
-        coupons: {
-          bsonType: 'array',
-          items: {
-            bsonType: 'object',
-            required: ['code', 'label', 'discount'],
-            properties: {
-              code: { bsonType: 'string' },
-              label: { bsonType: 'string' },
-              discount: { bsonType: ['int', 'long', 'double', 'decimal'] },
-              service: { bsonType: 'string' },
-              firstBooking: { bsonType: 'bool' },
-            },
-          },
-        },
         updated_at: { bsonType: 'date' },
         latitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
         longitude: { bsonType: ['int', 'long', 'double', 'decimal'] },
@@ -269,13 +298,6 @@ const collections = {
   },
 };
 
-const migratedCoupons = [
-  { code: 'ECRFIRST50', discount: 50, firstBooking: true, label: '50% off your first water tanker booking', service: 'Water tanker' },
-  { code: 'WATER200', discount: 200, label: '₹200 off water tanker bookings', service: 'Water tanker' },
-  { code: 'SEWAGE300', discount: 300, label: '₹300 off sewage pickup', service: 'Sewage pickup' },
-  { code: 'WEEKEND15', discount: 15, label: '15% off weekend bookings' },
-];
-
 async function ensureCollection(db, name, validator) {
   const exists = await db.listCollections({ name }, { nameOnly: true }).hasNext();
   if (!exists) {
@@ -290,6 +312,39 @@ async function ensureCollection(db, name, validator) {
   });
 }
 
+async function loadConfiguredContent(db) {
+  const defaultPath = process.cwd().endsWith('backend')
+    ? resolve(process.cwd(), 'content.config.json')
+    : resolve(process.cwd(), 'backend', 'content.config.json');
+  const configuredPath = process.env.CONTENT_CONFIG_PATH || defaultPath;
+  const configuredJson = process.env.CONTENT_CONFIG_JSON;
+
+  try {
+    const content = configuredJson
+      ? JSON.parse(configuredJson)
+      : JSON.parse(await readFile(resolve(configuredPath as string), 'utf8'));
+    const clientId = content.client_id || process.env.CONTENT_CLIENT_ID || 'urban-tanker';
+    const config = content.config || content;
+    const coupons = Array.isArray(content.coupons) ? content.coupons : [];
+    await db.collection('content').updateOne(
+      { client_id: clientId },
+      { $set: { client_id: clientId, config, updated_at: new Date() } },
+      { upsert: true },
+    );
+    for (const coupon of coupons) {
+      await db.collection('coupons').updateOne(
+        { client_id: clientId, code: coupon.code },
+        { $setOnInsert: { id: randomUUID(), client_id: clientId, code: coupon.code, label: coupon.label, discount: coupon.discount, service: coupon.service || null, firstBooking: coupon.firstBooking === true, active: true, created_at: new Date(), updated_at: new Date() } },
+        { upsert: true },
+      );
+    }
+    console.log(`Loaded configured content for client ${clientId}`);
+  } catch (error) {
+    if (!process.env.CONTENT_CONFIG_PATH && !configuredJson && error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
+    throw new Error(`Unable to load configured content: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 const initDatabase = async () => {
   try {
     const db = await getDatabase();
@@ -297,6 +352,7 @@ const initDatabase = async () => {
 
     await db.command({ ping: 1 });
     for (const [name, validator] of Object.entries(collections)) await ensureCollection(db, name, validator);
+    await loadConfiguredContent(db);
     await db.collection('users').createIndex({ client_id: 1, email: 1 }, { unique: true, name: 'client_email_unique' });
     await db.collection('users').createIndex({ client_id: 1, role: 1 }, { name: 'client_role' });
     await db.collection('users').createIndex({ created_at: -1 }, { name: 'created_at_desc' });
@@ -326,6 +382,9 @@ const initDatabase = async () => {
     await db.collection('subscriptions').createIndex({ client_id: 1, owner_uid: 1, status: 1 }, { name: 'customer_subscriptions' });
     await db.collection('invoices').createIndex({ client_id: 1, order_id: 1 }, { unique: true, name: 'order_invoice_unique' });
     await db.collection('support_requests').createIndex({ client_id: 1, status: 1, updated_at: -1 }, { name: 'support_status_updated' });
+    await db.collection('coupons').createIndex({ client_id: 1, code: 1 }, { unique: true, name: 'client_coupon_code_unique' });
+    await db.collection('coupons').createIndex({ client_id: 1, active: 1 }, { name: 'active_coupons' });
+    await db.collection('coupons').createIndex({ client_id: 1, created_at: -1 }, { name: 'coupons_by_date' });
     const ordersForHistory = await db.collection('orders').find({}, { projection: { _id: 0, id: 1, client_id: 1, status: 1, owner_uid: 1, statusHistory: 1, created: 1 } }).toArray();
     for (const order of ordersForHistory) {
       if (await db.collection('order_history').countDocuments({ client_id: order.client_id, order_id: order.id })) continue;
@@ -387,11 +446,6 @@ const initDatabase = async () => {
     await db.collection('drivers').updateMany({ approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
     await db.collection('vendors').updateMany({ approval_status: { $exists: false } }, { $set: { approval_status: 'approved', updated_at: new Date() } });
     await db.collection('content').createIndex({ client_id: 1 }, { unique: true, name: 'client_content_unique' });
-    await db.collection('content').updateOne(
-      { client_id: 'urban-tanker' },
-      { $setOnInsert: { client_id: 'urban-tanker', config: {}, coupons: migratedCoupons, updated_at: new Date() } },
-      { upsert: true },
-    );
     await db.collection('sessions').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0, name: 'session_expiry' });
     await db.collection('sessions').createIndex({ token_hash: 1, client_id: 1 }, { unique: true, name: 'session_token_client' });
 

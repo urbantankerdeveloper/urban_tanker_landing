@@ -4,7 +4,7 @@ import { useAppStore } from '../../app/store';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import type { AppData } from '../../shared/lib/types';
-import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminDrivers, loadAdminOrderHistory, loadAdminVehicles, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
+import { assignAdminOrderToVendor, contentClientId, createAdminAccount, createAdminCoupon, createAdminDriver, createAdminVehicle, loadAdminDashboard, loadAdminDrivers, loadAdminCoupons, loadAdminOrderHistory, loadAdminVehicles, loadContent, notifyVendorsOfOrder, updateAdminCouponStatus, updateAdminVendorStatus, type AdminAccountInput, type AdminCustomer, type AdminDashboardData, type OrderHistoryItem } from '../../shared/lib/cloudStore';
 import { hydrateContent } from '../../app/store';
 import { useState, type FormEvent } from 'react';
 import { useEffect } from 'react';
@@ -206,26 +206,158 @@ export function AdminDashboard({ view = 'overview' }: { view?: string }) {
   </>;
 }
 
+function CouponsSkeleton() {
+  return (
+    <article className="data-surface table-surface" aria-busy="true" aria-label="Loading coupons">
+      <div className="table-head">
+        <div><span className="eyebrow">Customer offers</span><div className="skeleton-line" style={{ width: '120px', height: '32px', marginTop: '8px' }} /></div>
+      </div>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Code</th><th>Offer</th><th>Service</th><th>Discount</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 5 }).map((_, index) => (
+              <tr key={index} style={{ opacity: 0.5 }}>
+                <td><div className="skeleton-line" style={{ width: '80px' }} /></td>
+                <td><div className="skeleton-line" style={{ width: '150px', marginBottom: '4px' }} /><div className="skeleton-line" style={{ width: '100px' }} /></td>
+                <td><div className="skeleton-line" style={{ width: '100px' }} /></td>
+                <td><div className="skeleton-line" style={{ width: '60px' }} /></td>
+                <td><div className="skeleton-line" style={{ width: '80px' }} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  );
+}
+
 function AdminCouponsView() {
-  const coupons = useAppStore(state => state.content.coupons);
   const notify = useAppStore(state => state.notify);
+  const [coupons, setCoupons] = useState<Awaited<ReturnType<typeof loadAdminCoupons>>>([]);
+  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
-  const [busyCode, setBusyCode] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [form, setForm] = useState({ code: '', label: '', discount: '', service: '', firstBooking: false });
+
+  useEffect(() => {
+    const loadCoupons = async () => {
+      try {
+        setLoading(true);
+        const loaded = await loadAdminCoupons();
+        setCoupons(loaded);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Unable to load coupons.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadCoupons();
+  }, [notify]);
+
   const visibleCoupons = coupons.slice((page - 1) * 10, page * 10);
   const toggleCoupon = async (coupon: typeof coupons[number]) => {
-    setBusyCode(coupon.code);
-    try { await updateAdminCouponStatus(coupon.code, coupon.active === false); useAppStore.setState(state => ({ content: { ...state.content, coupons: state.content.coupons.map(item => item.code === coupon.code ? { ...item, active: coupon.active === false } : item) } })); notify(`Coupon ${coupon.active === false ? 'enabled' : 'disabled'}.`); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to update coupon.'); } finally { setBusyCode(null); }
+    setBusyId(coupon.id);
+    try {
+      await updateAdminCouponStatus(coupon.id, coupon.active === false);
+      setCoupons(coupons.map(item => item.id === coupon.id ? { ...item, active: coupon.active === false } : item));
+      notify(`Coupon ${coupon.active === false ? 'enabled' : 'disabled'}.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to update coupon.');
+    } finally {
+      setBusyId(null);
+    }
   };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    try { const coupon = await createAdminCoupon({ code: form.code, label: form.label, discount: Number(form.discount), service: form.service || undefined, firstBooking: form.firstBooking }); useAppStore.setState(state => ({ content: { ...state.content, coupons: [coupon, ...state.content.coupons] } })); setForm({ code: '', label: '', discount: '', service: '', firstBooking: false }); setOpen(false); notify('Coupon created and enabled.'); } catch (error) { notify(error instanceof Error ? error.message : 'Unable to create coupon.'); }
+    try {
+      const coupon = await createAdminCoupon({ code: form.code, label: form.label, discount: Number(form.discount), service: form.service || undefined, firstBooking: form.firstBooking });
+      setCoupons([coupon, ...coupons]);
+      setForm({ code: '', label: '', discount: '', service: '', firstBooking: false });
+      setOpen(false);
+      notify('Coupon created and enabled.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Unable to create coupon.');
+    }
   };
+
+  if (loading) {
+    return <>
+      <PageHeader eyebrow="Admin workspace · Coupons" title="Coupon controls." copy="Review the offers currently available to customers." action={<Button variant="primary" icon={Plus} onClick={() => setOpen(true)}>Add coupon</Button>} />
+      <CouponsSkeleton />
+    </>;
+  }
+
   return <>
     <PageHeader eyebrow="Admin workspace · Coupons" title="Coupon controls." copy="Review the offers currently available to customers." action={<Button variant="primary" icon={Plus} onClick={() => setOpen(true)}>Add coupon</Button>} />
-    <article className="data-surface table-surface"><div className="table-head"><div><span className="eyebrow">Customer offers</span><h2>{coupons.length} coupons</h2></div></div><div className="table-scroll"><table><thead><tr><th>Code</th><th>Offer</th><th>Service</th><th>Discount</th><th>Status</th></tr></thead><tbody>{visibleCoupons.map(coupon => <tr key={coupon.code}><td><b className="mono">{coupon.code}</b></td><td>{coupon.label}<small>{coupon.firstBooking ? 'First booking only' : 'All eligible bookings'}</small></td><td>{coupon.service || 'All services'}</td><td><b>{coupon.discount}{coupon.discount < 100 ? '%' : ' off'}</b></td><td><button className="coupon-status-control" type="button" onClick={() => void toggleCoupon(coupon)} disabled={busyCode === coupon.code} aria-label={`${coupon.active === false ? 'Enable' : 'Disable'} coupon ${coupon.code}`}><Status>{busyCode === coupon.code ? 'Updating...' : coupon.active === false ? 'Inactive' : 'Active'}</Status></button></td></tr>)}</tbody></table>{!coupons.length && <div className="empty-state"><h3>No coupons configured</h3><p>Create a coupon to make an offer available to customers.</p></div>}</div><Pagination page={page} pageSize={10} total={coupons.length} onPageChange={setPage} /></article>
-    {open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="coupon-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close coupon form">×</button><span className="eyebrow">Customer offer</span><h2 id="coupon-dialog-title">Add a new coupon.</h2><form className="auth-form" onSubmit={submit}><label>Coupon code<input value={form.code} onChange={event => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="WATER200" pattern="[A-Z0-9_-]{3,30}" required /></label><label>Offer label<input value={form.label} onChange={event => setForm({ ...form, label: event.target.value })} placeholder="₹200 off water bookings" required /></label><div className="field-row"><label>Discount<input type="number" min="1" step="1" value={form.discount} onChange={event => setForm({ ...form, discount: event.target.value })} required /></label><label>Service<select value={form.service} onChange={event => setForm({ ...form, service: event.target.value })}><option value="">All services</option><option>Water tanker</option><option>Sewage pickup</option></select></label></div><label className="remember-option"><input type="checkbox" checked={form.firstBooking} onChange={event => setForm({ ...form, firstBooking: event.target.checked })} /> First booking only</label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Create coupon</Button></div></form></section></div>}
+    <article className="data-surface table-surface">
+      <div className="table-head">
+        <div><span className="eyebrow">Customer offers</span><h2>{coupons.length} coupons</h2></div>
+      </div>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Offer</th>
+              <th>Service</th>
+              <th>Discount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleCoupons.map(coupon => (
+              <tr key={coupon.id}>
+                <td><b className="mono">{coupon.code}</b></td>
+                <td>{coupon.label}<small>{coupon.firstBooking ? 'First booking only' : 'All eligible bookings'}</small></td>
+                <td>{coupon.service || 'All services'}</td>
+                <td><b>{coupon.discount}{coupon.discount < 100 ? '%' : ' off'}</b></td>
+                <td><button className="coupon-status-control" type="button" onClick={() => void toggleCoupon(coupon)} disabled={busyId === coupon.id} aria-label={`${coupon.active === false ? 'Enable' : 'Disable'} coupon ${coupon.code}`}><Status>{busyId === coupon.id ? 'Updating...' : coupon.active === false ? 'Inactive' : 'Active'}</Status></button></td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            {!coupons.length && (
+              <tr>
+                <td colSpan={5}>
+                  <div className="empty-state">
+                    <h3>No coupons configured</h3>
+                    <p>Create a coupon to make an offer available to customers.</p>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tfoot>
+        </table>
+      </div>
+      <Pagination page={page} pageSize={10} total={coupons.length} onPageChange={setPage} />
+    </article>
+    {open && (
+      <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}>
+        <section className="modal" role="dialog" aria-modal="true" aria-labelledby="coupon-dialog-title">
+          <button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close coupon form">×</button>
+          <span className="eyebrow">Customer offer</span>
+          <h2 id="coupon-dialog-title">Add a new coupon.</h2>
+          <form className="auth-form" onSubmit={submit}>
+            <label>Coupon code<input value={form.code} onChange={event => setForm({ ...form, code: event.target.value.toUpperCase() })} placeholder="WATER200" pattern="[A-Z0-9_-]{3,30}" required /></label>
+            <label>Offer label<input value={form.label} onChange={event => setForm({ ...form, label: event.target.value })} placeholder="₹200 off water bookings" required /></label>
+            <div className="field-row">
+              <label>Discount<input type="number" min="1" step="1" value={form.discount} onChange={event => setForm({ ...form, discount: event.target.value })} required /></label>
+              <label>Service<select value={form.service} onChange={event => setForm({ ...form, service: event.target.value })}><option value="">All services</option><option>Water tanker</option><option>Sewage pickup</option></select></label>
+            </div>
+            <label className="remember-option"><input type="checkbox" checked={form.firstBooking} onChange={event => setForm({ ...form, firstBooking: event.target.checked })} /> First booking only</label>
+            <div className="heading-actions">
+              <Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button variant="primary" type="submit">Create coupon</Button>
+            </div>
+          </form>
+        </section>
+      </div>
+    )}
   </>;
 }
 

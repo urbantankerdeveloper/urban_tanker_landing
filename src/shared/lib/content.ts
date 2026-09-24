@@ -1,10 +1,11 @@
 import type { Role } from './types';
 
 export interface CouponContent {
+  id: string;
   code: string;
   label: string;
   discount: number;
-  service?: string;
+  service?: string | null;
   firstBooking?: boolean;
   active?: boolean;
 }

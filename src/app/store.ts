@@ -148,7 +148,7 @@ export const hydrateContent = (cloudContent: Partial<AppContent>) => {
   useAppStore.setState(state => ({ content: {
     ...state.content,
     ...cloudContent,
-    coupons: Array.isArray(cloudContent.coupons) ? cloudContent.coupons : state.content.coupons,
+    coupons: Array.isArray(cloudContent.coupons) ? cloudContent.coupons : [],
     brand: { ...state.content.brand, ...cloudContent.brand },
     customer: { ...state.content.customer, ...cloudContent.customer },
     auth: { ...state.content.auth, ...cloudContent.auth },

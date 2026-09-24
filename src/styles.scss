@@ -2596,12 +2596,21 @@ textarea[aria-invalid="true"] {
 
 .chart-surface {
 	min-width: 0;
-	overflow-x: auto;
+	overflow-x: auto !important;
 	overflow-y: hidden;
 	scrollbar-gutter: stable;
 	-webkit-overflow-scrolling: touch;
 }
 
+.chart-surface:has(.bar-group:nth-child(31)) .chart {
+	width: 1920px;
+	min-width: 1920px;
+}
+
+.chart-surface:has(.bar-group:nth-child(61)) .chart {
+	width: 5760px;
+	min-width: 5760px;
+}
 .chart .bar-group {
 	min-width: 64px;
 	flex: 1 0 64px;

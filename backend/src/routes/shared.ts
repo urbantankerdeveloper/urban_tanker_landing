@@ -69,9 +69,10 @@ export function registerSharedRoutes(app: Express, deps: any) {
         res.set('Cache-Control', 'public, max-age=60');
         return res.json(cached.value);
       }
-      const document = await contentCollection.findOne({ client_id: clientId }, { projection: { _id: 0, config: 1, coupons: 1 } });
+      const document = await contentCollection.findOne({ client_id: clientId }, { projection: { _id: 0, config: 1 } });
       if (!document) return res.status(404).json({ message: 'Content configuration was not found.' });
-      const value = { ...document.config, coupons: document.coupons || [] };
+      const coupons = await deps.couponsCollection.find({ client_id: clientId, active: true }, { projection: { _id: 0 } }).toArray();
+      const value = { ...document.config, coupons: coupons || [] };
       contentCache.set(clientId, { value, expiresAt: Date.now() + deps.contentCacheTtlMs });
       res.set('Cache-Control', 'public, max-age=60');
       res.json(value);
