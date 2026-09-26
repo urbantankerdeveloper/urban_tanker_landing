@@ -1,11 +1,12 @@
 import type { Express } from 'express';
 
 export function registerCustomerRoutes(app: Express, deps: any) {
-  const { ordersCollection, orderHistoryCollection, notificationsCollection, usersCollection, io, randomInt, createHash, recordOrderHistory, recordNotification, removeDeliveryOtpFields, dispatchOrderNotification } = deps;
+  const { ordersCollection, orderHistoryCollection, notificationsCollection, usersCollection, savedAddressesCollection, io, randomInt, createHash, recordOrderHistory, recordNotification, removeDeliveryOtpFields, dispatchOrderNotification } = deps;
 
   app.post('/api/orders', deps.authenticateToken, async (req: any, res: any) => {
+    let order: Record<string, any> = {};
     try {
-      const order = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+      order = req.body && typeof req.body === 'object' ? { ...req.body } : {};
       if (!order.id || !order.service || !order.status) return res.status(400).json({ message: 'Order details are incomplete.' });
       delete order.statusHistory;
       for (const key of Object.keys(order)) if (order[key] === null || order[key] === undefined) delete order[key];
@@ -38,8 +39,10 @@ export function registerCustomerRoutes(app: Express, deps: any) {
       }
       res.status(200).json({ id: order.id });
     } catch (error) {
-      console.error('Order persistence error:', error);
-      res.status(500).json({ message: 'Unable to save the order.' });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : '';
+      console.error('Order persistence error:', { message: errorMessage, stack: errorStack, order: { id: order.id, service: order.service, status: order.status } });
+      res.status(500).json({ message: 'Unable to save the order.', error: errorMessage });
     }
   });
 
@@ -109,6 +112,79 @@ export function registerCustomerRoutes(app: Express, deps: any) {
     } catch (error) {
       console.error('Customer rating error:', error);
       res.status(500).json({ message: 'Unable to save customer feedback.' });
+    }
+  });
+
+  // Saved Addresses Endpoints
+  app.post('/api/customer/addresses', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+      const { label, address, city, pincode, latitude, longitude } = req.body;
+      if (!label || !address || !city || !pincode) return res.status(400).json({ message: 'Address label, address, city, and pincode are required.' });
+      const savedAddress = {
+        id: deps.randomUUID(),
+        client_id: req.user.clientId,
+        owner_uid: req.user.uid,
+        label: String(label).trim().slice(0, 100),
+        address: String(address).trim().slice(0, 500),
+        city: String(city).trim().slice(0, 100),
+        pincode: String(pincode).trim().slice(0, 10),
+        latitude: typeof latitude === 'number' ? latitude : null,
+        longitude: typeof longitude === 'number' ? longitude : null,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      await savedAddressesCollection.insertOne(savedAddress);
+      res.status(201).json({ id: savedAddress.id, label: savedAddress.label });
+    } catch (error) {
+      console.error('Save address error:', error);
+      res.status(500).json({ message: 'Unable to save address.' });
+    }
+  });
+
+  app.get('/api/customer/addresses', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+      const addresses = await savedAddressesCollection.find({ client_id: req.user.clientId, owner_uid: req.user.uid }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+      res.set('Cache-Control', 'no-store');
+      res.json({ addresses });
+    } catch (error) {
+      console.error('Load addresses error:', error);
+      res.status(500).json({ message: 'Unable to load addresses.' });
+    }
+  });
+
+  app.put('/api/customer/addresses/:addressId', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+      const { label, address, city, pincode, latitude, longitude, isActive } = req.body;
+      const updateData: Record<string, any> = { updatedAt: new Date() };
+      if (label !== undefined) updateData.label = String(label).trim().slice(0, 100);
+      if (address !== undefined) updateData.address = String(address).trim().slice(0, 500);
+      if (city !== undefined) updateData.city = String(city).trim().slice(0, 100);
+      if (pincode !== undefined) updateData.pincode = String(pincode).trim().slice(0, 10);
+      if (latitude !== undefined) updateData.latitude = typeof latitude === 'number' ? latitude : null;
+      if (longitude !== undefined) updateData.longitude = typeof longitude === 'number' ? longitude : null;
+      if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+      const result = await savedAddressesCollection.updateOne({ id: req.params.addressId, client_id: req.user.clientId, owner_uid: req.user.uid }, { $set: updateData });
+      if (!result.matchedCount) return res.status(404).json({ message: 'Address not found.' });
+      res.json({ id: req.params.addressId, ...updateData });
+    } catch (error) {
+      console.error('Update address error:', error);
+      res.status(500).json({ message: 'Unable to update address.' });
+    }
+  });
+
+  app.delete('/api/customer/addresses/:addressId', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
+      const result = await savedAddressesCollection.deleteOne({ id: req.params.addressId, client_id: req.user.clientId, owner_uid: req.user.uid });
+      if (!result.deletedCount) return res.status(404).json({ message: 'Address not found.' });
+      res.json({ id: req.params.addressId, deleted: true });
+    } catch (error) {
+      console.error('Delete address error:', error);
+      res.status(500).json({ message: 'Unable to delete address.' });
     }
   });
 }

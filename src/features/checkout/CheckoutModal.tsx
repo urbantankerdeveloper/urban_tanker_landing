@@ -5,6 +5,8 @@ import { money } from "../../shared/data/demo";
 import type { CouponContent } from "../../shared/lib/content";
 import { useApi } from "../../shared/hooks/useApi";
 import { useAppStore } from "../../app/store";
+import { withRetry, CRITICAL_OPERATION_RETRY } from "../../shared/lib/retryUtils";
+import { useRequestDedup } from "../../shared/hooks/useRequestDedup";
 
 interface PaymentOrderResponse {
   orderId: string;
@@ -42,13 +44,16 @@ export function CheckoutModal() {
   const coupons = useAppStore((state) => state.content.coupons) as CouponContent[];
   const copy = useAppStore((state) => state.content.checkout);
   const paymentsApi = useApi("razorpay-payment");
+  const paymentDedup = useRequestDedup({
+    operationType: "process_payment",
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [couponCode, setCouponCode] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<CouponContent | null>(null);
   const [step, setStep] = useState<"review" | "payment">("review");
   const onClose = () => {
-    if (!busy) setCheckoutOpen(false);
+    if (!busy && !paymentDedup.isLoading) setCheckoutOpen(false);
   };
   const details = data.pendingBooking ?? data.booking;
   const hasPreviousBooking = Boolean(
@@ -138,14 +143,27 @@ export function CheckoutModal() {
       complete("Due on delivery");
       return;
     }
+
+    // Check for duplicate payment requests
+    const idempotencyKey = paymentDedup.startRequest();
+    if (!idempotencyKey) {
+      setError("A payment is already being processed. Please wait.");
+      return;
+    }
+
     setBusy(true);
     try {
-      const order = await paymentsApi.post<PaymentOrderResponse>(
-        "/createRazorpayOrder",
-        {
-          amount: Math.round(amount * 100),
-          receipt: `urban-tanker-${Date.now()}`,
-        },
+      // Retry order creation up to 4 times with exponential backoff
+      const order = await withRetry(
+        () => paymentsApi.post<PaymentOrderResponse>(
+          "/createRazorpayOrder",
+          {
+            amount: Math.round(amount * 100),
+            receipt: `urban-tanker-${Date.now()}`,
+          },
+          { idempotencyKey }
+        ),
+        CRITICAL_OPERATION_RETRY
       );
       await loadRazorpay();
       if (!window.Razorpay)
@@ -161,15 +179,19 @@ export function CheckoutModal() {
         theme: { color: "#0b8c96" },
         handler: async (payment) => {
           try {
-            const verification =
-              await paymentsApi.post<PaymentVerificationResponse>(
+            // Retry payment verification up to 4 times with exponential backoff
+            const verification = await withRetry(
+              () => paymentsApi.post<PaymentVerificationResponse>(
                 "/verifyRazorpayPayment",
                 {
                   razorpayOrderId: payment.razorpay_order_id,
                   razorpayPaymentId: payment.razorpay_payment_id,
                   razorpaySignature: payment.razorpay_signature,
                 },
-              );
+                { idempotencyKey }
+              ),
+              CRITICAL_OPERATION_RETRY
+            );
             if (!verification.verified)
               throw new Error("Payment verification failed.");
             complete("Paid", verification.paymentId || payment.razorpay_payment_id);
@@ -181,12 +203,14 @@ export function CheckoutModal() {
             );
           } finally {
             setBusy(false);
+            paymentDedup.completeOperation();
           }
         },
       });
       checkout.open();
     } catch (cause) {
       setBusy(false);
+      paymentDedup.completeOperation();
       setError(
         cause instanceof Error ? cause.message : "Unable to start payment.",
       );
@@ -353,9 +377,9 @@ export function CheckoutModal() {
           <Button
             variant="primary full"
             onClick={() => void pay()}
-            disabled={busy}
+            disabled={busy || paymentDedup.isLoading}
           >
-            {busy
+            {busy || paymentDedup.isLoading
               ? copy.processing
               : method === "Cash"
                 ? copy.confirmBooking

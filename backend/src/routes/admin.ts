@@ -117,6 +117,132 @@ export function registerAdminRoutes(app: Express, deps: any) {
     }
   });
 
+  // ============ OFFERS MANAGEMENT ============
+
+  app.get('/api/admin/offers', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      const offers = await deps.offersCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+      res.json({ offers });
+    } catch (error) {
+      const chainedError = new Error('Offers list error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to load offers.' });
+    }
+  });
+
+  app.post('/api/admin/offers', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      const service = String(req.body.service || '').trim();
+      const title = String(req.body.title || '').trim();
+      const description = String(req.body.description || '').trim();
+      const discount = String(req.body.discount || '').trim();
+      const minOrder = String(req.body.minOrder || '').trim();
+      const validFrom = String(req.body.validFrom || '').trim();
+      const validUntil = String(req.body.validUntil || '').trim();
+      const icon = String(req.body.icon || 'Package').trim();
+      const color = String(req.body.color || 'aqua').trim();
+      
+      if (!service || !title || !description || !discount) {
+        return res.status(400).json({ message: 'Service, title, description, and discount are required.' });
+      }
+      
+      const now = new Date();
+      const offer = {
+        id: deps.randomUUID(),
+        client_id: req.user.clientId,
+        service,
+        title,
+        description,
+        discount,
+        minOrder,
+        validFrom,
+        validUntil,
+        icon,
+        color,
+        active: true,
+        createdAt: now,
+        updatedAt: now
+      };
+      
+      await deps.offersCollection.insertOne(offer);
+      res.status(201).json({ offer });
+    } catch (error) {
+      const chainedError = new Error('Offer creation error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to create offer.' });
+    }
+  });
+
+  app.patch('/api/admin/offers/:offerId', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      
+      const update: Record<string, any> = { updatedAt: new Date() };
+      if (typeof req.body.service === 'string') update.service = req.body.service.trim();
+      if (typeof req.body.title === 'string') update.title = req.body.title.trim();
+      if (typeof req.body.description === 'string') update.description = req.body.description.trim();
+      if (typeof req.body.discount === 'string') update.discount = req.body.discount.trim();
+      if (typeof req.body.minOrder === 'string') update.minOrder = req.body.minOrder.trim();
+      if (typeof req.body.validFrom === 'string') update.validFrom = req.body.validFrom.trim();
+      if (typeof req.body.validUntil === 'string') update.validUntil = req.body.validUntil.trim();
+      if (typeof req.body.icon === 'string') update.icon = req.body.icon.trim();
+      if (typeof req.body.color === 'string') update.color = req.body.color.trim();
+      if (typeof req.body.active === 'boolean') update.active = req.body.active;
+      
+      const result = await deps.offersCollection.updateOne(
+        { id: req.params.offerId, client_id: req.user.clientId },
+        { $set: update }
+      );
+      
+      if (!result.matchedCount) return res.status(404).json({ message: 'Offer was not found.' });
+      
+      const updatedOffer = await deps.offersCollection.findOne(
+        { id: req.params.offerId, client_id: req.user.clientId },
+        { projection: { _id: 0 } }
+      );
+      res.json({ offer: updatedOffer });
+    } catch (error) {
+      const chainedError = new Error('Offer update error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to update offer.' });
+    }
+  });
+
+  app.patch('/api/admin/offers/:offerId/status', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      const active = req.body.active === true;
+      const result = await deps.offersCollection.updateOne(
+        { id: req.params.offerId, client_id: req.user.clientId },
+        { $set: { active, updatedAt: new Date() } }
+      );
+      if (!result.matchedCount) return res.status(404).json({ message: 'Offer was not found.' });
+      res.json({ id: req.params.offerId, active });
+    } catch (error) {
+      const chainedError = new Error('Offer status update error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to update offer status.' });
+    }
+  });
+
+  app.delete('/api/admin/offers/:offerId', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+      const result = await deps.offersCollection.deleteOne({
+        id: req.params.offerId,
+        client_id: req.user.clientId
+      });
+      if (!result.deletedCount) return res.status(404).json({ message: 'Offer was not found.' });
+      res.status(204).send();
+    } catch (error) {
+      const chainedError = new Error('Offer deletion error', { cause: error });
+      console.error(chainedError);
+      res.status(500).json({ message: 'Unable to delete offer.' });
+    }
+  });
+
   app.get('/api/admin/dashboard', deps.authenticateToken, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
@@ -289,19 +415,20 @@ export function registerAdminRoutes(app: Express, deps: any) {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const [vehicles, vendors] = await Promise.all([
       vehiclesCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
-      usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
+      usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1, display_name: 1 } }).sort({ updated_at: -1 }).toArray(),
     ]);
-    const vendorMap = new Map(vendors.map((vendor: any) => [vendor.uid, vendor.name]));
+    const vendorMap = new Map(vendors.map((vendor: any) => [vendor.uid, vendor.name || vendor.display_name]));
     res.json({ vehicles: vehicles.map((vehicle: any) => ({ id: vehicle.id, registration_number: vehicle.registration_number, vehicle_type: vehicle.vehicle_type, capacity: vehicle.capacity, active: vehicle.active, approval_status: vehicle.approval_status || (vehicle.active ? 'approved' : 'pending'), vendor_uid: vehicle.vendor_uid, vendor_name: vendorMap.get(vehicle.vendor_uid) || 'Unknown vendor', image_url: vehicle.image_url })) });
   });
 
   app.get('/api/admin/drivers', deps.authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const driverFilter = req.query.approvedOnly === 'true' ? { client_id: req.user.clientId, $or: [{ approval_status: 'approved' }, { approval_status: { $exists: false }, active: true }] } : { client_id: req.user.clientId };
     const [drivers, vendors] = await Promise.all([
-      driversCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
-      usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
+      driversCollection.find(driverFilter, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
+      usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1, display_name: 1 } }).sort({ updated_at: -1 }).toArray(),
     ]);
-    const vendorMap = new Map(vendors.map((vendor: any) => [vendor.uid, vendor.name]));
+    const vendorMap = new Map(vendors.map((vendor: any) => [vendor.uid, vendor.name || vendor.display_name]));
     res.json({ drivers: drivers.map((driver: any) => ({ id: driver.id, name: driver.name, phone: driver.phone, active: driver.active, approval_status: driver.approval_status || (driver.active ? 'approved' : 'pending'), vendor_uid: driver.vendor_uid, vendor_name: vendorMap.get(driver.vendor_uid) || 'Unknown vendor', address: driver.address, address_proof: driver.address_proof })) });
   });
 
@@ -317,6 +444,14 @@ export function registerAdminRoutes(app: Express, deps: any) {
     res.json({ id: req.params.vehicleId, approved, active: approved, approvalStatus: approved ? 'approved' : 'rejected' });
   });
 
+  app.patch('/api/admin/vehicles/:vehicleId/status', deps.authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const active = req.body.active === true;
+    const result = await vehiclesCollection.updateOne({ id: req.params.vehicleId, client_id: req.user.clientId }, { $set: { active, updated_at: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ message: 'Vehicle was not found.' });
+    res.json({ id: req.params.vehicleId, active });
+  });
+
   app.patch('/api/admin/drivers/:driverId/approval', deps.authenticateToken, async (req: any, res: any) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const approved = req.body.approved === true;
@@ -327,6 +462,14 @@ export function registerAdminRoutes(app: Express, deps: any) {
     if (!result.matchedCount) return res.status(404).json({ message: 'Driver was not found.' });
     await sendApprovalStatusEmail({ email: vendor?.email, name: vendor?.display_name, resource: 'driver', status: approved ? 'approved' : 'rejected', detail: `${driver.name} · ${driver.phone || 'No phone number'}` }).catch(error => console.error('Driver approval email error:', error));
     res.json({ id: req.params.driverId, approved, active: approved, approvalStatus: approved ? 'approved' : 'rejected' });
+  });
+
+  app.patch('/api/admin/drivers/:driverId/status', deps.authenticateToken, async (req: any, res: any) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+    const active = req.body.active === true;
+    const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, approval_status: 'approved' }, { $set: { active, updated_at: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ message: 'Approved driver was not found.' });
+    res.json({ id: req.params.driverId, active });
   });
 
   app.get('/api/admin/vendors/:vendorUid/vehicles', deps.authenticateToken, async (req: any, res: any) => {

@@ -35,14 +35,6 @@ export function verifyToken(token) {
   }
 }
 
-export function decodeToken(token) {
-  try {
-    return jwt.decode(token);
-  } catch (error) {
-    return null;
-  }
-}
-
 export function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }

@@ -1,11 +1,23 @@
 export type Role = 'customer' | 'vendor' | 'admin';
-export type Workspace = 'overview' | 'book' | 'orders' | 'track' | 'support' | 'fleet' | 'drivers' | 'maintenance' | 'attendance' | 'payouts' | 'subscriptions' | 'invoices' | 'dispatch' | 'customers' | 'vendors' | 'coupons';
+export type Workspace = 'overview' | 'book' | 'offers' | 'orders' | 'track' | 'support' | 'addresses' | 'fleet' | 'drivers' | 'maintenance' | 'attendance' | 'payouts' | 'subscriptions' | 'invoices' | 'dispatch' | 'customers' | 'vendors' | 'coupons' | 'offers-management';
 export type OrderStatus = 'Created' | 'Pending acceptance' | 'Accepted' | 'En route' | 'Arrived' | 'Delivered' | 'Rejected' | 'Cancelled' | 'Vendor assigned' | 'Vendor accepted' | 'Vendor rejected';
 
 export interface Profile {
   name: string;
   phone: string;
   email?: string;
+}
+
+export interface SavedAddress {
+  id: string;
+  label: string;
+  address: string;
+  city: string;
+  pincode: string;
+  latitude: number | null;
+  longitude: number | null;
+  isActive: boolean;
+  createdAt: string;
 }
 
 export interface BookingDraft {
@@ -112,6 +124,22 @@ export interface Vehicle {
   permitExpiry?: string;
 }
 
+export interface Offer {
+  id: string;
+  service: 'Water tanker' | 'Sewage pickup' | 'Both';
+  title: string;
+  description: string;
+  discount: string;
+  minOrder: string;
+  validFrom: string;
+  validUntil: string;
+  active: boolean;
+  icon: string;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppData {
   role: Role;
   profile: Profile | null;
@@ -119,6 +147,7 @@ export interface AppData {
   booking: BookingDraft;
   orders: Order[];
   vendors: Vendor[];
+  savedAddresses: SavedAddress[];
   pendingBooking?: BookingDraft & { amount: number };
 }
 

@@ -29,20 +29,6 @@ export async function authenticateToken(req, res, next) {
   next();
 }
 
-export function optionalAuth(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (token) {
-    const user = verifyToken(token);
-    if (user) {
-      req.user = user;
-    }
-  }
-
-  next();
-}
-
 export function requireRole(roles) {
   return (req, res, next) => {
     if (!req.user) {
