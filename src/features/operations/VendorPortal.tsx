@@ -22,6 +22,8 @@ import { API_BASE_URL } from "../../shared/lib/apiConfig";
 import { getAuthToken, getCurrentUser } from "../../features/auth/auth";
 import { FleetExpiryPanel } from './FleetExpiryPanel';
 import { VendorDriversWithProofView as VendorDriversFormView } from './VendorDriversWithProofView';
+import { withRetry, STANDARD_OPERATION_RETRY } from "../../shared/lib/retryUtils";
+import { useRequestDedup } from "../../shared/hooks/useRequestDedup";
 
 const stages: OrderStatus[] = [
     "Created",
@@ -526,8 +528,37 @@ function VendorMaintenanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; on
     const [records, setRecords] = useState<Array<Record<string, unknown>>>([]);
     const [open, setOpen] = useState(false);
     const [form, setForm] = useState({ vehicleId: vehicles[0]?.id || '', scheduledAt: '', description: '', cost: '0' });
+    const maintenanceDedup = useRequestDedup({ operationType: 'create_maintenance' });
+    
     useEffect(() => { void loadVendorMaintenance().then(setRecords).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load maintenance records.')); }, [onNotify]);
-    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); try { await createVendorMaintenance({ ...form, cost: Number(form.cost) || 0 }); setRecords(await loadVendorMaintenance()); setForm({ vehicleId: vehicles[0]?.id || '', scheduledAt: '', description: '', cost: '0' }); setOpen(false); onNotify('Maintenance reminder scheduled.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to schedule maintenance.'); } };
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const key = maintenanceDedup.startRequest();
+        if (!key) {
+            onNotify('A maintenance creation request is already in progress. Please wait.');
+            return;
+        }
+
+        try {
+            // Create maintenance record with retry logic
+            await withRetry(
+                () => createVendorMaintenance({ ...form, cost: Number(form.cost) || 0 }),
+                STANDARD_OPERATION_RETRY
+            );
+            // Reload maintenance records with retry
+            setRecords(await withRetry(
+                () => loadVendorMaintenance(),
+                STANDARD_OPERATION_RETRY
+            ));
+            setForm({ vehicleId: vehicles[0]?.id || '', scheduledAt: '', description: '', cost: '0' });
+            setOpen(false);
+            onNotify('Maintenance reminder scheduled.');
+        } catch (error) {
+            onNotify(error instanceof Error ? error.message : 'Unable to schedule maintenance.');
+        } finally {
+            maintenanceDedup.completeOperation();
+        }
+    };
     return <><PageHeader eyebrow="Vendor workspace · Maintenance" title="Keep the fleet ready." copy="Schedule maintenance work before it interrupts customer deliveries." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)} disabled={!vehicles.length}>Schedule maintenance</Button>} /><div className="order-list">{records.length ? records.map(record => <article className="order-row" key={String(record.id)}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{String(record.description)}</b><Status>{String(record.status)}</Status></div><span>{String(record.scheduled_at)}</span><small>Estimated cost: {String(record.cost || 0)}</small></div></article>) : <div className="empty-state"><Package size={28} /><h3>No maintenance scheduled</h3><p>Schedule service for a vehicle in your fleet.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="maintenance-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close maintenance form">×</button><span className="eyebrow">Fleet maintenance</span><h2 id="maintenance-dialog-title">Schedule maintenance</h2><p className="modal-copy">Keep vehicles ready for the next delivery assignment.</p><form className="auth-form" onSubmit={submit}><label>Vehicle<select value={form.vehicleId} onChange={event => setForm({ ...form, vehicleId: event.target.value })}>{vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.registrationNumber} · {vehicle.capacity || 'Capacity not set'}</option>)}</select></label><label>Scheduled date<input type="date" value={form.scheduledAt} onChange={event => setForm({ ...form, scheduledAt: event.target.value })} required /></label><label>Description<input value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="Service, inspection, repair" required /></label><label>Estimated cost<input type="number" min="0" value={form.cost} onChange={event => setForm({ ...form, cost: event.target.value })} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Schedule maintenance</Button></div></form></section></div>}</>;
 }
 
@@ -535,8 +566,31 @@ function VendorMaintenanceView({ vehicles, onNotify }: { vehicles: Vehicle[]; on
 function VendorAttendanceView({ drivers, onNotify }: { drivers: Array<{ id: string; name: string; phone: string; active: boolean }>; onNotify: (message: string) => void }) {
     const [form, setForm] = useState({ driverId: drivers[0]?.id || '', date: new Date().toISOString().slice(0, 10), status: 'present', notes: '' });
     const [open, setOpen] = useState(false);
+    const attendanceDedup = useRequestDedup({ operationType: 'save_attendance' });
+    
     useEffect(() => { if (!form.driverId && drivers[0]?.id) setForm(current => ({ ...current, driverId: drivers[0].id })); }, [drivers, form.driverId]);
-    const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); try { await saveDriverAttendance(form); onNotify('Driver attendance saved.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to save attendance.'); } };
+    
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const key = attendanceDedup.startRequest();
+        if (!key) {
+            onNotify('An attendance save request is already in progress. Please wait.');
+            return;
+        }
+
+        try {
+            // Save driver attendance with retry logic
+            await withRetry(
+                () => saveDriverAttendance(form),
+                STANDARD_OPERATION_RETRY
+            );
+            onNotify('Driver attendance saved.');
+        } catch (error) {
+            onNotify(error instanceof Error ? error.message : 'Unable to save attendance.');
+        } finally {
+            attendanceDedup.completeOperation();
+        }
+    };
     const openForDriver = (driverId: string) => { setForm(current => ({ ...current, driverId })); setOpen(true); };
     return <><PageHeader eyebrow="Vendor workspace · Attendance" title="Know who is ready to drive." copy="Record daily driver attendance and keep dispatch availability accurate." action={<Button variant="primary" icon={Users} onClick={() => openForDriver(drivers[0]?.id || '')} disabled={!drivers.length}>Record attendance</Button>} /><div className="order-list">{drivers.length ? drivers.map(driver => <article className="order-row" key={driver.id}><div className="order-service-icon"><Users size={19} /></div><div className="order-main"><div><b>{driver.name}</b><Status>{driver.active ? 'Active' : 'Inactive'}</Status></div><span>{driver.phone || 'No phone number'}</span><small>Attendance can be recorded for this driver.</small></div><Button variant="quiet" onClick={() => openForDriver(driver.id)}>Record attendance</Button></article>) : <div className="empty-state"><Users size={28} /><h3>No drivers yet</h3><p>Add a driver before recording attendance.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="attendance-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close attendance form">×</button><span className="eyebrow">Driver attendance</span><h2 id="attendance-dialog-title">Record attendance</h2><p className="modal-copy">Keep today’s driver availability accurate for dispatch.</p><form className="auth-form" onSubmit={submit}><label>Driver<select value={form.driverId} onChange={event => setForm({ ...form, driverId: event.target.value })}>{drivers.map(driver => <option key={driver.id} value={driver.id}>{driver.name} · {driver.active ? 'Active' : 'Inactive'}</option>)}</select></label><label>Date<input type="date" value={form.date} onChange={event => setForm({ ...form, date: event.target.value })} required /></label><label>Status<select value={form.status} onChange={event => setForm({ ...form, status: event.target.value })}><option value="present">Present</option><option value="absent">Absent</option><option value="leave">Leave</option></select></label><label>Notes<textarea value={form.notes} onChange={event => setForm({ ...form, notes: event.target.value })} rows={3} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Save attendance</Button></div></form></section></div>}</>;
 }
@@ -609,10 +663,36 @@ function VehicleFleetManagementView({ vehicles, setVehicles, onNotify }: { vehic
         const registrationNumber = form.registrationNumber.trim().toUpperCase();
         if (!registrationPattern.test(registrationNumber)) { onNotify('Use registration format: TN12 AB 9847.'); return; }
         if (!form.vehicleType) { onNotify('Select a vehicle type.'); return; }
-        try { const vehicle = await createVendorVehicle({ ...form, registrationNumber, driverName: '', driverPhone: '' }); setVehicles(items => [vehicle, ...items]); setForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' }); setOpen(false); onNotify('Vehicle added to your fleet.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to add vehicle.'); }
+        try {
+            // Create vendor vehicle with retry logic
+            const vehicle = await withRetry(
+                () => createVendorVehicle({ ...form, registrationNumber, driverName: '', driverPhone: '' }),
+                STANDARD_OPERATION_RETRY
+            );
+            setVehicles(items => [vehicle, ...items]);
+            setForm({ registrationNumber: '', vehicleType: 'Water tanker', capacity: '', imageUrl: '' });
+            setOpen(false);
+            onNotify('Vehicle added to your fleet.');
+        } catch (error) {
+            onNotify(error instanceof Error ? error.message : 'Unable to add vehicle.');
+        }
     };
-    const remove = async (vehicle: Vehicle) => { try { await deleteVendorVehicle(vehicle.id); setVehicles(items => items.filter(item => item.id !== vehicle.id)); onNotify('Vehicle removed from your fleet.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to delete vehicle.'); } };
-    return <><PageHeader eyebrow="Vendor workspace · Fleet" title="Manage your vehicles." copy="Add vehicles independently. Assign a driver only when accepting an order." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)}>Add vehicle</Button>} /><div className="order-list">{vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>{vehicle.driverName ? `Assigned driver: ${vehicle.driverName}` : 'No driver assigned'}</small></div><Button variant={vehicle.active ? 'quiet' : 'primary'} onClick={() => void setVendorVehicleActive(vehicle.id, !vehicle.active).then(() => setVehicles(items => items.map(item => item.id === vehicle.id ? { ...item, active: !vehicle.active } : item))).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to update vehicle.'))}>{vehicle.active ? 'Set inactive' : 'Set active'}</Button><Button variant="quiet" onClick={() => void remove(vehicle)}>Delete</Button></article>) : <div className="empty-state"><Package size={28} /><h3>No vehicles yet</h3><p>Add a vehicle before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close vehicle form">×</button><span className="eyebrow">Fleet management</span><h2 id="vehicle-dialog-title">Add vehicle</h2><form className="auth-form" onSubmit={submit} noValidate><label>Registration number<input value={form.registrationNumber} onChange={event => setForm({ ...form, registrationNumber: event.target.value.toUpperCase() })} placeholder="TN12 AB 9847" pattern="[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}" required /><small>State code (2 letters) - RTO number (2 digits) - 2 letters - vehicle number (4 digits).</small></label><label>Vehicle type<select value={form.vehicleType} onChange={event => setForm({ ...form, vehicleType: event.target.value })} required><option value="">Select vehicle type</option><option>Tanker</option><option>Water tanker</option><option>Sewage tanker</option></select></label><label>Capacity<input value={form.capacity} onChange={event => setForm({ ...form, capacity: event.target.value })} placeholder="6 KL" /></label><label>Vehicle image <small>(optional)</small><input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2_000_000) { onNotify('Vehicle image must be smaller than 2 MB.'); return; } void compressImage(file).then(imageUrl => setForm(current => ({ ...current, imageUrl }))).catch(() => onNotify('Unable to process vehicle image.')); }} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add vehicle</Button></div></form></section></div>}</>;
+    const remove = async (vehicle: Vehicle) => {
+        try {
+            // Delete vendor vehicle with retry logic
+            await withRetry(
+                () => deleteVendorVehicle(vehicle.id),
+                STANDARD_OPERATION_RETRY
+            );
+            setVehicles(items => items.filter(item => item.id !== vehicle.id));
+            onNotify('Vehicle removed from your fleet.');
+        } catch (error) {
+            onNotify(error instanceof Error ? error.message : 'Unable to delete vehicle.');
+        }
+    };
+    const activeVehicles = vehicles.filter(vehicle => vehicle.active).length;
+    const inactiveVehicles = vehicles.length - activeVehicles;
+    return <><PageHeader eyebrow="Vendor workspace · Fleet" title="Manage your vehicles." copy="Add vehicles independently. Assign a driver only when accepting an order." action={<Button variant="primary" icon={Package} onClick={() => setOpen(true)}>Add vehicle</Button>} /><section className="stats-grid vendor-stats" aria-label="Fleet status summary"><StatCard icon={Package} label="Total vehicles" value={String(vehicles.length)} detail="Fleet roster" /><StatCard icon={Check} label="Active" value={String(activeVehicles)} detail="Ready for assignment" tone="highlight" /><StatCard icon={ShieldCheck} label="Inactive" value={String(inactiveVehicles)} detail="Paused from dispatch" /></section><div className="order-list">{vehicles.length ? vehicles.map(vehicle => <article className="order-row" key={vehicle.id}><div className="order-service-icon"><Package size={19} /></div><div className="order-main"><div><b>{vehicle.registrationNumber}</b><Status>{vehicle.active ? 'Active' : 'Inactive'}</Status></div><span>{vehicle.vehicleType} · {vehicle.capacity || 'Capacity not set'}</span><small>{vehicle.driverName ? `Assigned driver: ${vehicle.driverName}` : 'No driver assigned'}</small></div><Button variant={vehicle.active ? 'quiet' : 'primary'} onClick={() => void setVendorVehicleActive(vehicle.id, !vehicle.active).then(() => setVehicles(items => items.map(item => item.id === vehicle.id ? { ...item, active: !vehicle.active } : item))).catch(error => onNotify(error instanceof Error ? error.message : 'Unable to update vehicle.'))}>{vehicle.active ? 'Set inactive' : 'Set active'}</Button><Button variant="quiet" onClick={() => void remove(vehicle)}>Delete</Button></article>) : <div className="empty-state"><Package size={28} /><h3>No vehicles yet</h3><p>Add a vehicle before accepting delivery orders.</p></div>}</div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-dialog-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close vehicle form">×</button><span className="eyebrow">Fleet management</span><h2 id="vehicle-dialog-title">Add vehicle</h2><form className="auth-form" onSubmit={submit} noValidate><label>Registration number<input value={form.registrationNumber} onChange={event => setForm({ ...form, registrationNumber: event.target.value.toUpperCase() })} placeholder="TN12 AB 9847" pattern="[A-Z]{2}[ -]?[0-9]{2}[ -]?[A-Z]{2}[ -]?[0-9]{4}" required /><small>State code (2 letters) - RTO number (2 digits) - 2 letters - vehicle number (4 digits).</small></label><label>Vehicle type<select value={form.vehicleType} onChange={event => setForm({ ...form, vehicleType: event.target.value })} required><option value="">Select vehicle type</option><option>Tanker</option><option>Water tanker</option><option>Sewage tanker</option></select></label><label>Capacity<input value={form.capacity} onChange={event => setForm({ ...form, capacity: event.target.value })} placeholder="6 KL" /></label><label>Vehicle image <small>(optional)</small><input type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2_000_000) { onNotify('Vehicle image must be smaller than 2 MB.'); return; } void compressImage(file).then(imageUrl => setForm(current => ({ ...current, imageUrl }))).catch(() => onNotify('Unable to process vehicle image.')); }} /></label><div className="heading-actions"><Button variant="quiet" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit">Add vehicle</Button></div></form></section></div>}</>;
 }
 
 function VendorOrdersView({ orders }: { orders: AppData["orders"] }) {
@@ -656,7 +736,25 @@ function VendorSupportView({ onNotify }: { onNotify: (message: string) => void }
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         setBusy(true);
-        try { await createSupportRequest({ subject: `${requestType}: ${subject}`, message, orderId: orderId.trim() || undefined }); setMessage(''); setOrderId(''); setOpen(false); onNotify('Support request sent to the operations team.'); } catch (error) { onNotify(error instanceof Error ? error.message : 'Unable to send support request.'); } finally { setBusy(false); }
+        try {
+            // Create support request with retry logic
+            await withRetry(
+                () => createSupportRequest({ 
+                    subject: `${requestType}: ${subject}`, 
+                    message, 
+                    orderId: orderId.trim() || undefined 
+                }),
+                STANDARD_OPERATION_RETRY
+            );
+            setMessage('');
+            setOrderId('');
+            setOpen(false);
+            onNotify('Support request sent to the operations team.');
+        } catch (error) {
+            onNotify(error instanceof Error ? error.message : 'Unable to send support request.');
+        } finally {
+            setBusy(false);
+        }
     };
     return <>
         <PageHeader eyebrow="Vendor workspace · Help" title="How can operations help?" copy="Contact dispatch about assignments, customer access, payments, or delivery issues." />

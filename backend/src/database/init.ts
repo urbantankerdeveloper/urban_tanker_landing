@@ -19,6 +19,7 @@ const collections = {
         approval_status: { enum: ['pending', 'approved', 'rejected'] },
         display_name: { bsonType: 'string' },
         phone_number: { bsonType: ['string', 'null'] },
+        last_login: { bsonType: ['date', 'null'] },
         created_at: { bsonType: 'date' },
         updated_at: { bsonType: 'date' },
       },
@@ -269,6 +270,28 @@ const collections = {
       },
     },
   },
+  offers: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'service', 'title', 'description', 'discount', 'active', 'createdAt', 'updatedAt'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        service: { bsonType: 'string' },
+        title: { bsonType: 'string' },
+        description: { bsonType: 'string' },
+        discount: { bsonType: 'string' },
+        minOrder: { bsonType: 'string' },
+        validFrom: { bsonType: 'string' },
+        validUntil: { bsonType: 'string' },
+        icon: { bsonType: 'string' },
+        color: { bsonType: 'string' },
+        active: { bsonType: 'bool' },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' },
+      },
+    },
+  },
   content: {
     $jsonSchema: {
       bsonType: 'object',
@@ -293,6 +316,26 @@ const collections = {
         role: { enum: ['customer', 'vendor', 'admin'] },
         created_at: { bsonType: 'date' },
         expires_at: { bsonType: 'date' },
+      },
+    },
+  },
+  saved_addresses: {
+    $jsonSchema: {
+      bsonType: 'object',
+      required: ['id', 'client_id', 'owner_uid', 'label', 'address', 'city', 'pincode', 'isActive', 'createdAt', 'updatedAt'],
+      properties: {
+        id: { bsonType: 'string' },
+        client_id: { bsonType: 'string' },
+        owner_uid: { bsonType: 'string' },
+        label: { bsonType: 'string' },
+        address: { bsonType: 'string' },
+        city: { bsonType: 'string' },
+        pincode: { bsonType: 'string' },
+        latitude: { bsonType: ['int', 'long', 'double', 'decimal', 'null'] },
+        longitude: { bsonType: ['int', 'long', 'double', 'decimal', 'null'] },
+        isActive: { bsonType: 'bool' },
+        createdAt: { bsonType: 'date' },
+        updatedAt: { bsonType: 'date' },
       },
     },
   },
@@ -385,6 +428,12 @@ const initDatabase = async () => {
     await db.collection('coupons').createIndex({ client_id: 1, code: 1 }, { unique: true, name: 'client_coupon_code_unique' });
     await db.collection('coupons').createIndex({ client_id: 1, active: 1 }, { name: 'active_coupons' });
     await db.collection('coupons').createIndex({ client_id: 1, created_at: -1 }, { name: 'coupons_by_date' });
+    await db.collection('offers').createIndex({ client_id: 1 }, { name: 'offers_by_client' });
+    await db.collection('offers').createIndex({ client_id: 1, active: 1 }, { name: 'active_offers' });
+    await db.collection('offers').createIndex({ client_id: 1, createdAt: -1 }, { name: 'offers_by_date' });
+    await db.collection('saved_addresses').createIndex({ client_id: 1, owner_uid: 1 }, { name: 'customer_saved_addresses' });
+    await db.collection('saved_addresses').createIndex({ client_id: 1, owner_uid: 1, createdAt: -1 }, { name: 'user_addresses_by_date' });
+    await db.collection('saved_addresses').createIndex({ client_id: 1, owner_uid: 1, isActive: 1 }, { name: 'active_addresses' });
     const ordersForHistory = await db.collection('orders').find({}, { projection: { _id: 0, id: 1, client_id: 1, status: 1, owner_uid: 1, statusHistory: 1, created: 1 } }).toArray();
     for (const order of ordersForHistory) {
       if (await db.collection('order_history').countDocuments({ client_id: order.client_id, order_id: order.id })) continue;

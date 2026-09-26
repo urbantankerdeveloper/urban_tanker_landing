@@ -8,7 +8,8 @@ export const initialState: AppData = {
   location: { address: 'ECR, Chennai', latitude: null, longitude: null, accuracy: null, permission: 'prompt', updatedAt: null },
   booking: { service: 'Water tanker', waterType: 'Drinking / potable', capacity: '6 KL', date: new Date().toISOString().slice(0, 10), slot: 'As soon as possible', address: '18 Lakeview Apartments, Indiranagar', landmark: 'Gate 2', notes: '' },
   orders: [],
-  vendors: []
+  vendors: [],
+  savedAddresses: []
 };
 
 export const money = (value: number) => `₹${value.toLocaleString('en-IN')}`;

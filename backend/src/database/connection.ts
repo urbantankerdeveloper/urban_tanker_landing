@@ -38,12 +38,14 @@ export const driversCollection = (await databasePromise).collection<any>('driver
 export const vehiclesCollection = (await databasePromise).collection<any>('vehicles');
 export const contentCollection = (await databasePromise).collection<any>('content');
 export const couponsCollection = (await databasePromise).collection<any>('coupons');
+export const offersCollection = (await databasePromise).collection<any>('offers');
 export const maintenanceCollection = (await databasePromise).collection<any>('maintenance');
 export const attendanceCollection = (await databasePromise).collection<any>('driver_attendance');
 export const payoutsCollection = (await databasePromise).collection<any>('payouts');
 export const subscriptionsCollection = (await databasePromise).collection<any>('subscriptions');
 export const invoicesCollection = (await databasePromise).collection<any>('invoices');
 export const supportRequestsCollection = (await databasePromise).collection<any>('support_requests');
+export const savedAddressesCollection = (await databasePromise).collection<any>('saved_addresses');
 
 export async function closeConnection() {
   await client.close();

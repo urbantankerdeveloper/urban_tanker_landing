@@ -368,10 +368,10 @@ export async function loadAdminVehicles(): Promise<Array<{ id: string; registrat
   }));
 }
 
-export async function loadAdminDrivers(): Promise<Array<{ id: string; name: string; phone: string; active: boolean; approvalStatus: string; vendorUid: string; vendorName: string }>> {
+export async function loadAdminDrivers(approvedOnly = false): Promise<Array<{ id: string; name: string; phone: string; active: boolean; approvalStatus: string; vendorUid: string; vendorName: string }>> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
-  const response = await fetch(`${API_BASE_URL}/api/admin/drivers`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const response = await fetch(`${API_BASE_URL}/api/admin/drivers${approvedOnly ? '?approvedOnly=true' : ''}`, { headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
   const payload = await response.json().catch(() => ({})) as { drivers?: Array<{ id: string; name: string; phone?: string; active: boolean; approval_status?: string; vendor_uid?: string; vendor_name?: string }>; message?: string };
   if (!response.ok) throw new Error(payload.message || 'Unable to load drivers.');
   return (payload.drivers || []).map(driver => ({
@@ -393,12 +393,28 @@ export async function approveAdminVehicle(vehicleId: string, approved: boolean):
   if (!response.ok) throw new Error(payload.message || 'Unable to update vehicle approval.');
 }
 
+export async function setAdminVehicleActive(vehicleId: string, active: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/vehicles/${encodeURIComponent(vehicleId)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update vehicle status.');
+}
+
 export async function approveAdminDriver(driverId: string, approved: boolean): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
   const response = await fetch(`${API_BASE_URL}/api/admin/drivers/${encodeURIComponent(driverId)}/approval`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ approved }) });
   const payload = await response.json().catch(() => ({})) as { message?: string };
   if (!response.ok) throw new Error(payload.message || 'Unable to update driver approval.');
+}
+
+export async function setAdminDriverActive(driverId: string, active: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/drivers/${encodeURIComponent(driverId)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update driver status.');
 }
 
 export async function setVendorDriverStatus(driverId: string, active: boolean): Promise<void> {
@@ -482,6 +498,7 @@ export interface AdminCustomer {
   status: string;
   createdAt?: string | Date;
   updatedAt?: string | Date;
+  lastLogin?: string | Date | null;
 }
 
 export interface AdminAccountInput {
@@ -594,6 +611,51 @@ export async function updateAdminCouponStatus(couponId: string, active: boolean)
   if (!response.ok) throw new Error(payload.message || 'Unable to update coupon status.');
 }
 
+// ============ OFFERS MANAGEMENT ============
+
+export async function loadAdminOffers(): Promise<any[]> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/offers`, { method: 'GET', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { offers?: any[]; message?: string };
+  if (!response.ok || !payload.offers) throw new Error(payload.message || 'Unable to load offers.');
+  return payload.offers;
+}
+
+export async function createAdminOffer(input: { service: string; title: string; description: string; discount: string; minOrder: string; validFrom: string; validUntil: string; icon: string; color: string }): Promise<any> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/offers`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { offer?: any; message?: string };
+  if (!response.ok || !payload.offer) throw new Error(payload.message || 'Unable to create offer.');
+  return payload.offer;
+}
+
+export async function updateAdminOffer(offerId: string, input: Partial<{ service: string; title: string; description: string; discount: string; minOrder: string; validFrom: string; validUntil: string; icon: string; color: string; active: boolean }>): Promise<any> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/offers/${encodeURIComponent(offerId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify(input) });
+  const payload = await response.json().catch(() => ({})) as { offer?: any; message?: string };
+  if (!response.ok || !payload.offer) throw new Error(payload.message || 'Unable to update offer.');
+  return payload.offer;
+}
+
+export async function deleteAdminOffer(offerId: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/offers/${encodeURIComponent(offerId)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId } });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to delete offer.');
+}
+
+export async function updateAdminOfferStatus(offerId: string, active: boolean): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/admin/offers/${encodeURIComponent(offerId)}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }, body: JSON.stringify({ active }) });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || 'Unable to update offer status.');
+}
+
 export async function updateVendorOrder(order: AppData['orders'][number], options: { action?: 'accept' | 'reject'; vehicleId?: string; driverId?: string; deliveryOtp?: string; rejectionReason?: string; deliveryProof?: string } = {}): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error('Authentication is required.');
@@ -633,4 +695,58 @@ export function subscribeToUserProfile(
 ): Unsubscribe {
   void getUserProfile().then(onProfile).catch(onError);
   return () => {};
+}
+
+// Saved Addresses API Functions
+export async function loadSavedAddresses(): Promise<SavedAddress[]> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/customer/addresses`, {
+    headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }
+  });
+  if (!response.ok) throw new Error('Unable to load saved addresses.');
+  const result = await response.json() as { addresses: SavedAddress[] };
+  return result.addresses || [];
+}
+
+export async function createSavedAddress(input: { label: string; address: string; city: string; pincode: string; latitude?: number; longitude?: number }): Promise<{ id: string }> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/customer/addresses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId },
+    body: JSON.stringify(input)
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({})) as { message?: string };
+    throw new Error(error.message || 'Unable to save address.');
+  }
+  return await response.json() as { id: string };
+}
+
+export async function updateSavedAddress(addressId: string, input: Partial<SavedAddress>): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/customer/addresses/${encodeURIComponent(addressId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId },
+    body: JSON.stringify(input)
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({})) as { message?: string };
+    throw new Error(error.message || 'Unable to update address.');
+  }
+}
+
+export async function deleteSavedAddress(addressId: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error('Authentication is required.');
+  const response = await fetch(`${API_BASE_URL}/api/customer/addresses/${encodeURIComponent(addressId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${user.idToken}`, 'X-Client-Id': contentClientId }
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({})) as { message?: string };
+    throw new Error(error.message || 'Unable to delete address.');
+  }
 }

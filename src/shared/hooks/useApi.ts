@@ -10,6 +10,11 @@ export interface ApiRequestOptions extends Omit<RequestInit, 'body' | 'method'> 
   body?: RequestBody;
   method?: HttpMethod;
   query?: Record<string, string | number | boolean | null | undefined>;
+  /**
+   * Idempotency key for request deduplication on backend
+   * When provided, the backend will track this request and skip duplicates
+   */
+  idempotencyKey?: string;
 }
 
 export interface ApiError {
@@ -69,6 +74,10 @@ async function request<T>(path: string, options: ApiRequestOptions = {}, signal?
   const token = getAuthToken();
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
   if (body && !(body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  // Add idempotency key header if provided
+  if (options.idempotencyKey && !headers.has('X-Idempotency-Key')) {
+    headers.set('X-Idempotency-Key', options.idempotencyKey);
+  }
   const response = await fetch(buildUrl(path, options.query), { ...options, method: options.method || 'GET', body, headers, signal });
   const payload = await parseResponse(response);
   if (!response.ok) {

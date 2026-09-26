@@ -54,7 +54,7 @@ export function App() {
       .catch(() => notify('Unable to load saved content.'));
     if (authLoading) return () => { if (refreshTimer) window.clearInterval(refreshTimer); };
     if (!user) {
-      useAppStore.setState(state => ({ data: { ...state.data, profile: null }, isHydrated: true }));
+      setHydrated(true);
       return () => { if (refreshTimer) window.clearInterval(refreshTimer); };
     }
     const hydrateUser = async () => {

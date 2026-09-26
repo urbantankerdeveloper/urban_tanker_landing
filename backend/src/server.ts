@@ -10,8 +10,9 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerCustomerRoutes } from './routes/customer.js';
 import { registerSharedRoutes } from './routes/shared.js';
 import { registerVendorRoutes } from './routes/vendor.js';
-import { closeConnection, contentCollection, couponsCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, supportRequestsCollection, vendorsCollection, usersCollection, vehiclesCollection } from './database/connection.js';
+import { closeConnection, contentCollection, couponsCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, supportRequestsCollection, vendorsCollection, usersCollection, vehiclesCollection, savedAddressesCollection, offersCollection } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
+import { idempotencyMiddleware } from './middleware/idempotency.js';
 import Razorpay from 'razorpay';
 import { hashPassword, hashToken } from './utils/auth.js';
 import { Server as SocketServer } from 'socket.io';
@@ -193,12 +194,15 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Id']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Id', 'X-Idempotency-Key']
 }));
 
 app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.use(express.urlencoded({ extended: true, limit: '64kb' }));
+
+// Request deduplication middleware - prevents duplicate submissions
+app.use(idempotencyMiddleware);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -380,7 +384,7 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
     const [orders, vendors, customerDocuments] = await Promise.all([
       ordersCollection.find({ client_id: clientId }, { projection: { _id: 0, deliveryOtpHash: 0, customerDeliveryOtp: 0 } }).sort({ created: -1 }).limit(500).toArray(),
       vendorsCollection.find({ client_id: clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
-      usersCollection.find({ role: 'customer', $or: [{ client_id: clientId }, { client_id: { $exists: false } }] }, { projection: { _id: 0, uid: 1, email: 1, display_name: 1, phone_number: 1, status: 1, created_at: 1, updated_at: 1 } }).sort({ created_at: -1 }).toArray(),
+      usersCollection.find({ role: 'customer', $or: [{ client_id: clientId }, { client_id: { $exists: false } }] }, { projection: { _id: 0, uid: 1, email: 1, display_name: 1, phone_number: 1, status: 1, created_at: 1, updated_at: 1, last_login: 1 } }).sort({ created_at: -1 }).toArray(),
     ]);
     const revenue = orders.filter(order => order.status === 'Delivered').reduce((total, order) => total + Number(order.amount || 0), 0);
     const delivered = orders.filter(order => order.status === 'Delivered').length;
@@ -398,7 +402,7 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
       });
       return { label: day.toLocaleDateString('en-IN', { weekday: 'short' }), water: dayOrders.filter(order => order.service === 'Water tanker').length, sewage: dayOrders.filter(order => order.service === 'Sewage pickup').length };
     });
-    const customers = customerDocuments.map(customer => ({ uid: customer.uid, email: customer.email, name: customer.display_name, phone: customer.phone_number, status: customer.status || 'active', createdAt: customer.created_at, updatedAt: customer.updated_at }));
+    const customers = customerDocuments.map(customer => ({ uid: customer.uid, email: customer.email, name: customer.display_name, phone: customer.phone_number, status: customer.status || 'active', createdAt: customer.created_at, updatedAt: customer.updated_at, lastLogin: customer.last_login || null }));
     res.json({ orders, vendors, customers, revenue, delivered, activeDeliveries, activeVendors, chart });
   } catch (error) {
     console.error('Admin dashboard error:', error);
@@ -498,7 +502,7 @@ app.post('/api/admin/users', authenticateToken, async (req, res) => {
     if (await usersCollection.findOne({ email, client_id: clientId })) return res.status(409).json({ message: 'Email already registered.' });
     const now = new Date();
     const uid = randomUUID();
-    const user = { _id: uid, uid, email, password_hash: await hashPassword(password), display_name: displayName, phone_number: phoneNumber || null, role, email_verified: false, phone_verified: false, status: role === 'vendor' ? 'inactive' : 'active', available: role === 'vendor' ? false : undefined, created_at: now, updated_at: now, last_login: null, client_id: clientId };
+    const user = { _id: uid, uid, email, password_hash: await hashPassword(password), display_name: displayName, phone_number: phoneNumber || null, role, email_verified: false, phone_verified: false, status: role === 'vendor' ? 'inactive' : 'active', ...(role === 'vendor' ? { available: false } : {}), created_at: now, updated_at: now, last_login: null, client_id: clientId };
     await usersCollection.insertOne(user);
     if (role === 'vendor') await vendorsCollection.insertOne({ uid, client_id: clientId, name: displayName, email, phone: phoneNumber || null, driver: '', zone: '', vehicle: '', capacity: '', status: 'inactive', approval_status: 'pending', available: false, rating: '', updated_at: now });
     res.status(201).json({ uid, role, name: displayName, email, phone: phoneNumber, status: user.status, available: user.available === true });
@@ -550,9 +554,9 @@ app.get('/api/admin/vehicles', authenticateToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
   const [vehicles, vendors] = await Promise.all([
     vehiclesCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
-    usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
+    usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1, display_name: 1 } }).sort({ updated_at: -1 }).toArray(),
   ]);
-  const vendorMap = new Map(vendors.map(vendor => [vendor.uid, vendor.name]));
+  const vendorMap = new Map(vendors.map(vendor => [vendor.uid, vendor.name || vendor.display_name]));
   res.json({ vehicles: vehicles.map(vehicle => ({
     id: vehicle.id,
     registration_number: vehicle.registration_number,
@@ -567,11 +571,12 @@ app.get('/api/admin/vehicles', authenticateToken, async (req, res) => {
 
 app.get('/api/admin/drivers', authenticateToken, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
+  const driverFilter = req.query.approvedOnly === 'true' ? { client_id: req.user.clientId, $or: [{ approval_status: 'approved' }, { approval_status: { $exists: false }, active: true }] } : { client_id: req.user.clientId };
   const [drivers, vendors] = await Promise.all([
-    driversCollection.find({ client_id: req.user.clientId }, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
-    usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1 } }).sort({ updated_at: -1 }).toArray(),
+    driversCollection.find(driverFilter, { projection: { _id: 0 } }).sort({ updated_at: -1 }).toArray(),
+    usersCollection.find({ client_id: req.user.clientId, role: 'vendor' }, { projection: { _id: 0, uid: 1, name: 1, display_name: 1 } }).sort({ updated_at: -1 }).toArray(),
   ]);
-  const vendorMap = new Map(vendors.map(vendor => [vendor.uid, vendor.name]));
+  const vendorMap = new Map(vendors.map(vendor => [vendor.uid, vendor.name || vendor.display_name]));
   res.json({ drivers: drivers.map(driver => ({
     id: driver.id,
     name: driver.name,
@@ -758,6 +763,7 @@ registerAdminRoutes(app, {
   authenticateToken,
   contentCollection,
   couponsCollection,
+  offersCollection,
   contentCache,
   ordersCollection,
   vendorsCollection,
@@ -801,6 +807,7 @@ registerCustomerRoutes(app, {
   orderHistoryCollection,
   notificationsCollection,
   usersCollection,
+  savedAddressesCollection,
   io,
   createHash,
   randomInt,
