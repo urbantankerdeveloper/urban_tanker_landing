@@ -30,6 +30,9 @@ export default defineConfig({
       }
     })
   ],
+  build: {
+    emptyOutDir: false
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,
