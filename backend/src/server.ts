@@ -201,9 +201,6 @@ app.use(compression());
 app.use(express.json({ limit: '64kb' }));
 app.use(express.urlencoded({ extended: true, limit: '64kb' }));
 
-// Request deduplication middleware - prevents duplicate submissions
-app.use(idempotencyMiddleware);
-
 // Request logging middleware
 app.use((req, res, next) => {
   if (process.env.NODE_ENV !== 'production') console.log(`${req.method} ${req.path}`);
@@ -270,7 +267,7 @@ app.get('/api/vendor/vehicles', authenticateToken, async (req, res) => {
   res.json({ vehicles });
 });
 
-app.post('/api/vendor/vehicles', authenticateToken, async (req, res) => {
+app.post('/api/vendor/vehicles', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const registrationNumber = String(req.body.registrationNumber || '').trim().toUpperCase();
@@ -317,7 +314,7 @@ app.get('/api/vendor/drivers', authenticateToken, async (req, res) => {
   res.json({ drivers });
 });
 
-app.post('/api/vendor/drivers', authenticateToken, async (req, res) => {
+app.post('/api/vendor/drivers', authenticateToken, idempotencyMiddleware, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
   const name = String(req.body.name || '').trim();
   const phone = String(req.body.phone || '').trim();
@@ -329,7 +326,7 @@ app.post('/api/vendor/drivers', authenticateToken, async (req, res) => {
   res.status(201).json({ driver });
 });
 
-app.patch('/api/vendor/drivers/:driverId/status', authenticateToken, async (req, res) => {
+app.patch('/api/vendor/drivers/:driverId/status', authenticateToken, idempotencyMiddleware, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
   const active = req.body.active === true;
   const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, approval_status: 'approved' }, { $set: { active, updated_at: new Date() } });
@@ -337,7 +334,7 @@ app.patch('/api/vendor/drivers/:driverId/status', authenticateToken, async (req,
   res.json({ id: req.params.driverId, active });
 });
 
-app.delete('/api/vendor/drivers/:driverId', authenticateToken, async (req, res) => {
+app.delete('/api/vendor/drivers/:driverId', authenticateToken, idempotencyMiddleware, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
   const filter = { id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid };
   const result = await driversCollection.deleteOne(filter);
@@ -346,7 +343,7 @@ app.delete('/api/vendor/drivers/:driverId', authenticateToken, async (req, res) 
   res.status(204).send();
 });
 
-app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res) => {
+app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, idempotencyMiddleware, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
   const active = Boolean(req.body.active);
   const update: Record<string, any> = { active, updated_at: new Date() };
@@ -368,7 +365,7 @@ app.patch('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res)
   res.json({ id: req.params.vehicleId, active });
 });
 
-app.delete('/api/vendor/vehicles/:vehicleId', authenticateToken, async (req, res) => {
+app.delete('/api/vendor/vehicles/:vehicleId', authenticateToken, idempotencyMiddleware, async (req, res) => {
   if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
   const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1 } });
   const result = await vehiclesCollection.deleteOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid });
@@ -410,7 +407,7 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/admin/orders/:orderId/notify-vendors', authenticateToken, async (req, res) => {
+app.post('/api/admin/orders/:orderId/notify-vendors', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const order = await ordersCollection.findOne({
@@ -465,7 +462,7 @@ app.get('/api/admin/orders/:orderId/history', authenticateToken, async (req, res
   }
 });
 
-app.patch('/api/admin/orders/:orderId/assign', authenticateToken, async (req, res) => {
+app.patch('/api/admin/orders/:orderId/assign', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const vendorUid = String(req.body.vendorUid || '').trim();
@@ -478,7 +475,7 @@ app.patch('/api/admin/orders/:orderId/assign', authenticateToken, async (req, re
     const result = await ordersCollection.updateOne(filter, update);
     if (!result.matchedCount) return res.status(409).json({ message: 'Order is no longer available for manual assignment.' });
     await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: 'Vendor assigned', actorUid: req.user.uid, actorRole: req.user.role, vendorUid });
-    await recordNotification({ clientId: req.user.clientId, recipientRole: 'vendor', recipientUid: vendorUid, orderId: req.params.orderId, type: 'vendor-assigned', title: 'Order assigned', detail: `${req.params.orderId} was assigned by dispatch.` });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'vendor', recipientUid: vendorUid, orderId: String(req.params.orderId), type: 'vendor-assigned', title: 'Order assigned', detail: `${req.params.orderId} was assigned by dispatch.` });
     io.to(`vendor:${req.user.clientId}:${vendorUid}`).emit('order:created', { id: req.params.orderId, status: 'Vendor assigned', assignedVendorUid: vendorUid });
     res.json({ orderId: req.params.orderId, vendorUid, status: 'Vendor assigned' });
   } catch (error) {
@@ -487,7 +484,7 @@ app.patch('/api/admin/orders/:orderId/assign', authenticateToken, async (req, re
   }
 });
 
-app.post('/api/admin/users', authenticateToken, async (req, res) => {
+app.post('/api/admin/users', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const role = req.body.role === 'vendor' ? 'vendor' : req.body.role === 'customer' ? 'customer' : '';
@@ -512,7 +509,7 @@ app.post('/api/admin/users', authenticateToken, async (req, res) => {
   }
 });
 
-app.delete('/api/admin/users/:uid', authenticateToken, async (req, res) => {
+app.delete('/api/admin/users/:uid', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     if (req.params.uid === req.user.uid) return res.status(400).json({ message: 'You cannot delete your own admin account.' });
@@ -527,7 +524,7 @@ app.delete('/api/admin/users/:uid', authenticateToken, async (req, res) => {
   }
 });
 
-app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, async (req, res) => {
+app.patch('/api/admin/vendors/:vendorUid/status', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const active = req.body.active === true;
@@ -605,7 +602,7 @@ app.get('/api/admin/vendors/:vendorUid/drivers', authenticateToken, async (req, 
   res.json({ drivers });
 });
 
-app.post('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, async (req, res) => {
+app.post('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const vendor = await usersCollection.findOne({ uid: req.params.vendorUid, client_id: req.user.clientId, role: 'vendor' }, { projection: { uid: 1 } });
@@ -629,7 +626,7 @@ app.post('/api/admin/vendors/:vendorUid/vehicles', authenticateToken, async (req
   }
 });
 
-app.post('/api/admin/vendors/:vendorUid/drivers', authenticateToken, async (req, res) => {
+app.post('/api/admin/vendors/:vendorUid/drivers', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const vendor = await usersCollection.findOne({ uid: req.params.vendorUid, client_id: req.user.clientId, role: 'vendor' }, { projection: { uid: 1 } });
@@ -648,7 +645,7 @@ app.post('/api/admin/vendors/:vendorUid/drivers', authenticateToken, async (req,
   }
 });
 
-app.post('/api/orders', authenticateToken, async (req, res) => {
+app.post('/api/orders', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     const order = req.body && typeof req.body === 'object' ? { ...req.body } : {};
     if (!order.id || !order.service || !order.status) return res.status(400).json({ message: 'Order details are incomplete.' });
@@ -702,7 +699,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
   }
 });
 
-app.patch('/api/orders/:orderId/cancel', authenticateToken, async (req, res) => {
+app.patch('/api/orders/:orderId/cancel', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
     const reason = String(req.body.reason || 'Cancelled by customer.').trim().slice(0, 500);
@@ -714,7 +711,7 @@ app.patch('/api/orders/:orderId/cancel', authenticateToken, async (req, res) => 
     const result = await ordersCollection.updateOne(filter, cancellationUpdate);
     if (!result.matchedCount) return res.status(404).json({ message: 'Order was not found.' });
     await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: 'Cancelled', actorUid: req.user.uid, actorRole: req.user.role });
-    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: 'cancelled', title: 'Order cancelled', detail: `${req.params.orderId} · Customer cancelled the booking.` });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: String(req.params.orderId), type: 'cancelled', title: 'Order cancelled', detail: `${req.params.orderId} · Customer cancelled the booking.` });
     io.to(`vendor:${req.user.clientId}`).emit('order:cancelled', { orderId: req.params.orderId });
     res.json({ id: req.params.orderId, status: 'Cancelled' });
   } catch (error) {
@@ -723,7 +720,7 @@ app.patch('/api/orders/:orderId/cancel', authenticateToken, async (req, res) => 
   }
 });
 
-app.patch('/api/orders/:orderId/reschedule', authenticateToken, async (req, res) => {
+app.patch('/api/orders/:orderId/reschedule', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
     const scheduledDate = String(req.body.scheduledDate || '').trim();
@@ -734,7 +731,7 @@ app.patch('/api/orders/:orderId/reschedule', authenticateToken, async (req, res)
     const result = await ordersCollection.updateOne(filter, rescheduleUpdate);
     if (!result.matchedCount) return res.status(400).json({ message: 'Only pending orders can be rescheduled.' });
     await recordOrderHistory({ id: req.params.orderId, client_id: req.user.clientId }, { status: 'Pending acceptance', actorUid: req.user.uid, actorRole: req.user.role });
-    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: 'rescheduled', title: 'Order rescheduled', detail: `${req.params.orderId} · ${scheduledDate} · ${scheduledSlot}` });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: String(req.params.orderId), type: 'rescheduled', title: 'Order rescheduled', detail: `${req.params.orderId} · ${scheduledDate} · ${scheduledSlot}` });
     res.json({ id: req.params.orderId, scheduledDate, scheduledSlot });
   } catch (error) {
     console.error('Customer order reschedule error:', error);
@@ -742,7 +739,7 @@ app.patch('/api/orders/:orderId/reschedule', authenticateToken, async (req, res)
   }
 });
 
-app.patch('/api/orders/:orderId/rating', authenticateToken, async (req, res) => {
+app.patch('/api/orders/:orderId/rating', authenticateToken, idempotencyMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
     const rating = Number(req.body.rating);
@@ -751,7 +748,7 @@ app.patch('/api/orders/:orderId/rating', authenticateToken, async (req, res) => 
     const filter = { id: req.params.orderId, client_id: req.user.clientId, owner_uid: req.user.uid, status: 'Delivered' };
     const result = await ordersCollection.updateOne(filter, { $set: { customerRating: rating, customerFeedback: feedback, updated_at: new Date() } });
     if (!result.matchedCount) return res.status(400).json({ message: 'Only delivered orders can be rated.' });
-    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: req.params.orderId, type: 'rating-received', title: 'Customer feedback received', detail: `${req.params.orderId} · ${rating}/5` });
+    await recordNotification({ clientId: req.user.clientId, recipientRole: 'admin', orderId: String(req.params.orderId), type: 'rating-received', title: 'Customer feedback received', detail: `${req.params.orderId} · ${rating}/5` });
     res.json({ id: req.params.orderId, rating, feedback });
   } catch (error) {
     console.error('Customer rating error:', error);
@@ -761,6 +758,7 @@ app.patch('/api/orders/:orderId/rating', authenticateToken, async (req, res) => 
 
 registerAdminRoutes(app, {
   authenticateToken,
+  idempotencyMiddleware,
   contentCollection,
   couponsCollection,
   offersCollection,
@@ -784,6 +782,7 @@ registerAdminRoutes(app, {
 
 registerVendorRoutes(app, {
   authenticateToken,
+  idempotencyMiddleware,
   vendorsCollection,
   vehiclesCollection,
   driversCollection,
@@ -803,6 +802,7 @@ registerVendorRoutes(app, {
 
 registerCustomerRoutes(app, {
   authenticateToken,
+  idempotencyMiddleware,
   ordersCollection,
   orderHistoryCollection,
   notificationsCollection,
@@ -817,6 +817,7 @@ registerCustomerRoutes(app, {
 });
 
 registerSharedRoutes(app, {
+  idempotencyMiddleware,
   authenticateToken,
   notificationsCollection,
   contentCollection,

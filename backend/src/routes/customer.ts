@@ -3,7 +3,7 @@ import type { Express } from 'express';
 export function registerCustomerRoutes(app: Express, deps: any) {
   const { ordersCollection, orderHistoryCollection, notificationsCollection, usersCollection, savedAddressesCollection, io, randomInt, createHash, recordOrderHistory, recordNotification, removeDeliveryOtpFields, dispatchOrderNotification } = deps;
 
-  app.post('/api/orders', deps.authenticateToken, async (req: any, res: any) => {
+  app.post('/api/orders', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     let order: Record<string, any> = {};
     try {
       order = req.body && typeof req.body === 'object' ? { ...req.body } : {};
@@ -58,7 +58,7 @@ export function registerCustomerRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/orders/:orderId/cancel', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/orders/:orderId/cancel', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
       const reason = String(req.body.reason || 'Cancelled by customer.').trim().slice(0, 500);
@@ -79,7 +79,7 @@ export function registerCustomerRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/orders/:orderId/reschedule', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/orders/:orderId/reschedule', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
       const scheduledDate = String(req.body.scheduledDate || '').trim();
@@ -98,7 +98,7 @@ export function registerCustomerRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/orders/:orderId/rating', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/orders/:orderId/rating', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'customer') return res.status(403).json({ message: 'Customer access is required.' });
       const rating = Number(req.body.rating);

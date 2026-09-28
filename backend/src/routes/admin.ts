@@ -33,7 +33,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
     hashPassword,
   } = deps;
 
-  app.post('/api/admin/coupons', deps.authenticateToken, async (req: any, res: any) => {
+  app.post('/api/admin/coupons', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
       const code = String(req.body.code || '').trim().toUpperCase();
@@ -67,7 +67,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/admin/coupons/:couponId/status', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/admin/coupons/:couponId/status', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
       const active = req.body.active === true;
@@ -81,7 +81,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/admin/coupons/:couponId', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/admin/coupons/:couponId', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
       const label = typeof req.body.label === 'string' ? req.body.label.trim() : undefined;

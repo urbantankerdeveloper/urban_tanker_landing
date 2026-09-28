@@ -24,7 +24,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     res.json({ vehicles });
   });
 
-  app.post('/api/vendor/vehicles', deps.authenticateToken, async (req: any, res: any) => {
+  app.post('/api/vendor/vehicles', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
       const registrationNumber = String(req.body.registrationNumber || '').trim().toUpperCase();
@@ -52,7 +52,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     res.json({ drivers });
   });
 
-  app.post('/api/vendor/drivers', deps.authenticateToken, async (req: any, res: any) => {
+  app.post('/api/vendor/drivers', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const name = String(req.body.name || '').trim();
     const phone = String(req.body.phone || '').trim();
@@ -64,7 +64,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     res.status(201).json({ driver });
   });
 
-  app.patch('/api/vendor/drivers/:driverId/status', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/vendor/drivers/:driverId/status', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const active = req.body.active === true;
     const result = await driversCollection.updateOne({ id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid, approval_status: 'approved' }, { $set: { active, updated_at: new Date() } });
@@ -72,7 +72,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     res.json({ id: req.params.driverId, active });
   });
 
-  app.delete('/api/vendor/drivers/:driverId', deps.authenticateToken, async (req: any, res: any) => {
+  app.delete('/api/vendor/drivers/:driverId', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const filter = { id: req.params.driverId, client_id: req.user.clientId, vendor_uid: req.user.uid };
     const result = await driversCollection.deleteOne(filter);
@@ -81,7 +81,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     res.status(204).send();
   });
 
-  app.patch('/api/vendor/vehicles/:vehicleId', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/vendor/vehicles/:vehicleId', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const active = Boolean(req.body.active);
     const update: Record<string, any> = { active, updated_at: new Date() };
@@ -105,7 +105,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     res.json({ id: req.params.vehicleId, active });
   });
 
-  app.delete('/api/vendor/vehicles/:vehicleId', deps.authenticateToken, async (req: any, res: any) => {
+  app.delete('/api/vendor/vehicles/:vehicleId', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
     const vehicle = await vehiclesCollection.findOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid }, { projection: { driver_id: 1 } });
     const result = await vehiclesCollection.deleteOne({ id: req.params.vehicleId, client_id: req.user.clientId, vendor_uid: req.user.uid });
@@ -114,7 +114,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     res.status(204).send();
   });
 
-  app.patch('/api/vendor/availability', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/vendor/availability', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
       const account = await usersCollection.findOne({ uid: req.user.uid, client_id: req.user.clientId, role: 'vendor' }, { projection: { approval_status: 1, status: 1 } });
@@ -130,7 +130,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/vendor/location', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/vendor/location', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
       const latitude = Number(req.body.latitude);
@@ -144,7 +144,7 @@ export function registerVendorRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/vendor/orders/:orderId', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/vendor/orders/:orderId', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'vendor') return res.status(403).json({ message: 'Vendor access is required.' });
       const allowedStatuses = ['Created', 'Pending acceptance', 'Accepted', 'Rejected', 'Vendor assigned', 'Vendor accepted', 'Vendor rejected', 'En route', 'Arrived', 'Delivered'];
