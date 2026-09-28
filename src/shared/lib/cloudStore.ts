@@ -30,39 +30,49 @@ const contentValues = new Map<string, CloudState>();
 
 type Unsubscribe = () => void;
 
-export async function subscribeToContent(clientId: string, onContent: CloudStateHandler, onError: CloudErrorHandler): Promise<Unsubscribe> {
+export async function subscribeToContent(clientId: string, onContent: CloudStateHandler, onError: CloudErrorHandler, isPublic = false): Promise<Unsubscribe> {
   try {
-    const cachedContent = contentValues.get(clientId);
+    const user = getCurrentUser();
+    const cacheKey = isPublic ? `${clientId}:public` : (user ? `${clientId}:${user.role}` : clientId);
+    
+    const cachedContent = contentValues.get(cacheKey);
+    const endpoint = isPublic 
+      ? `/api/content/${encodeURIComponent(clientId)}/public`
+      : `/api/content/${encodeURIComponent(clientId)}`;
+    
     const request = cachedContent
       ? Promise.resolve(cachedContent)
-      : contentRequests.get(clientId) || (() => {
-        const promise = fetch(`${API_BASE_URL}/api/content/${encodeURIComponent(clientId)}`)
+      : contentRequests.get(cacheKey) || (() => {
+        const promise = fetch(`${API_BASE_URL}${endpoint}`)
           .then(async response => {
             if (!response.ok) throw new Error('Content configuration request failed.');
             const content = await response.json() as CloudState;
-            contentValues.set(clientId, content);
+            contentValues.set(cacheKey, content);
             return content;
           })
           .catch(error => {
-            contentRequests.delete(clientId);
+            contentRequests.delete(cacheKey);
             throw error;
           });
-        contentRequests.set(clientId, promise);
+        contentRequests.set(cacheKey, promise);
         return promise;
       })();
     const content = await request;
     onContent(content);
-    await saveEncryptedContent(clientId, content);
+    await saveEncryptedContent(cacheKey, content);
   } catch (error) {
-    const cached = await readEncryptedContent<CloudState>(clientId);
+    const cached = await readEncryptedContent<CloudState>(isPublic ? `${clientId}:public` : clientId);
     if (cached.value) onContent(cached.value);
     else onError(error instanceof Error ? error : new Error(String(error)));
   }
   return () => {};
 }
 
-export async function loadContent(clientId: string): Promise<CloudState> {
-  const response = await fetch(`${API_BASE_URL}/api/content/${encodeURIComponent(clientId)}`, { cache: 'no-store' });
+export async function loadContent(clientId: string, isPublic = false): Promise<CloudState> {
+  const endpoint = isPublic 
+    ? `/api/content/${encodeURIComponent(clientId)}/public`
+    : `/api/content/${encodeURIComponent(clientId)}`;
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, { cache: 'no-store' });
   if (!response.ok) throw new Error('Unable to refresh content configuration.');
   return await response.json() as CloudState;
 }

@@ -4,6 +4,43 @@ import Razorpay from 'razorpay';
 export function registerSharedRoutes(app: Express, deps: any) {
   const { notificationsCollection, contentCollection, contentCache, ordersCollection, invoicesCollection, subscriptionsCollection, supportRequestsCollection, usersCollection, razorpay, authenticateToken, recordNotification, captureError } = deps;
 
+  // Lightweight endpoint for login/public pages (MUST come first - no auth required)
+  app.get('/api/content/:clientId/public', async (req: any, res: any) => {
+    try {
+      const clientId = req.params.clientId;
+      const cacheKey = `${clientId}:public`;
+      
+      const cached = contentCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.set('Cache-Control', 'public, max-age=300');
+        return res.json(cached.value);
+      }
+      
+      const document = await contentCollection.findOne({ client_id: clientId }, { projection: { _id: 0, config: 1 } });
+      if (!document) return res.status(404).json({ message: 'Content configuration was not found.' });
+      
+      // Only fetch essential public data for login page
+      const coupons = await deps.couponsCollection.find(
+        { client_id: clientId, active: true, target_role: 'all' },
+        { projection: { _id: 0, code: 1, description: 1, discount: 1 } }
+      ).limit(5).toArray();
+      
+      // Return minimal config for login page
+      const value = {
+        branding: document.config?.branding,
+        services: document.config?.services,
+        coupons: coupons || []
+      };
+      
+      contentCache.set(cacheKey, { value, expiresAt: Date.now() + deps.contentCacheTtlMs });
+      res.set('Cache-Control', 'public, max-age=300');
+      res.json(value);
+    } catch (error) {
+      console.error('Public content lookup error:', error);
+      res.status(500).json({ message: 'Unable to load public content.' });
+    }
+  });
+
   app.post('/api/support/requests', authenticateToken, async (req: any, res: any) => {
     try {
       if (!['customer', 'vendor'].includes(req.user.role)) return res.status(403).json({ message: 'Customer or vendor access is required.' });
@@ -61,19 +98,45 @@ export function registerSharedRoutes(app: Express, deps: any) {
     }
   });
 
-  app.get('/api/content/:clientId', async (req: any, res: any) => {
+  // Optimized content endpoint with role-based filtering (requires auth)
+  app.get('/api/content/:clientId', authenticateToken, async (req: any, res: any) => {
     try {
       const clientId = req.params.clientId;
-      const cached = contentCache.get(clientId);
+      const userRole = req.user?.role || 'guest';
+      const cacheKey = `${clientId}:${userRole}`;
+      
+      // Check cache based on role
+      const cached = contentCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
         res.set('Cache-Control', 'public, max-age=60');
         return res.json(cached.value);
       }
+      
+      // Fetch base config
       const document = await contentCollection.findOne({ client_id: clientId }, { projection: { _id: 0, config: 1 } });
       if (!document) return res.status(404).json({ message: 'Content configuration was not found.' });
-      const coupons = await deps.couponsCollection.find({ client_id: clientId, active: true }, { projection: { _id: 0 } }).toArray();
-      const value = { ...document.config, coupons: coupons || [] };
-      contentCache.set(clientId, { value, expiresAt: Date.now() + deps.contentCacheTtlMs });
+      
+      // Filter coupons by role
+      let couponsQuery: any = { client_id: clientId, active: true };
+      if (userRole === 'vendor') {
+        couponsQuery.target_role = { $in: ['all', 'vendor'] };
+      } else if (userRole === 'customer') {
+        couponsQuery.target_role = { $in: ['all', 'customer'] };
+      } else if (userRole === 'guest') {
+        // Only show public/promotional coupons to guests
+        couponsQuery.target_role = 'all';
+      }
+      
+      const coupons = await deps.couponsCollection.find(couponsQuery, { projection: { _id: 0 } }).toArray();
+      
+      // Build role-specific content
+      const value = {
+        ...document.config,
+        coupons: coupons || [],
+        role: userRole
+      };
+      
+      contentCache.set(cacheKey, { value, expiresAt: Date.now() + deps.contentCacheTtlMs });
       res.set('Cache-Control', 'public, max-age=60');
       res.json(value);
     } catch (error) {
