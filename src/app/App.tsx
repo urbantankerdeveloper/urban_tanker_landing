@@ -43,13 +43,18 @@ export function App() {
     let unsubscribeContent = () => undefined;
     let unsubscribeOperations = () => undefined;
     let refreshTimer: number | undefined;
-    readEncryptedContent<Partial<AppContent>>(contentClientId).then(({ value }) => {
+    // Load public content for login page, role-specific content for authenticated users
+    const isPublic = !user;
+    const contentCacheKey = isPublic ? `${contentClientId}:public` : contentClientId;
+    
+    readEncryptedContent<Partial<AppContent>>(contentCacheKey).then(({ value }) => {
       if (value) hydrateContent(value);
     }).catch(() => undefined);
+    
     subscribeToContent(contentClientId, content => {
       hydrateContent(content);
-      saveEncryptedContent(contentClientId, content).catch(() => undefined);
-    }, () => notify('Saved content is unavailable. Using cached or default copy.'))
+      saveEncryptedContent(contentCacheKey, content).catch(() => undefined);
+    }, () => notify('Saved content is unavailable. Using cached or default copy.'), isPublic)
       .then(stop => { unsubscribeContent = stop; })
       .catch(() => notify('Unable to load saved content.'));
     if (authLoading) return () => { if (refreshTimer) window.clearInterval(refreshTimer); };
