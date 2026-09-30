@@ -5529,17 +5529,17 @@ textarea[aria-invalid="true"] {
 	overflow: hidden;
 	background: #f4f8f5;
 	position: relative;
+}
 
-	:global(.leaflet-container) {
-		height: 100%;
-		background: white;
-		font-family: inherit;
-	}
+:global(.map-container .leaflet-container) {
+	height: 100%;
+	background: white;
+	font-family: inherit;
+}
 
-	:global(.leaflet-popup-content-wrapper) {
-		background: white;
-		border-radius: 6px;
-	}
+:global(.map-container .leaflet-popup-content-wrapper) {
+	background: white;
+	border-radius: 6px;
 }
 
 .coords-input-section {
