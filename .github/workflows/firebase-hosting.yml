@@ -82,7 +82,7 @@ jobs:
         if: github.event_name == 'pull_request' && failure()
         uses: w9jds/firebase-action@master
         with:
-          args: deploy --only hosting:preview --token ${{ secrets.FIREBASE_CI_TOKEN }}
+          args: deploy --only hosting:urban-tanker-landing-preview --token ${{ secrets.FIREBASE_CI_TOKEN }}
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_CI_TOKEN }}
           PROJECT_ID: urban-tanker-landing
@@ -100,7 +100,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && failure()
         uses: w9jds/firebase-action@master
         with:
-          args: deploy --only hosting --token ${{ secrets.FIREBASE_CI_TOKEN }}
+          args: deploy --only hosting:urban-tanker-landing --token ${{ secrets.FIREBASE_CI_TOKEN }}
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_CI_TOKEN }}
           PROJECT_ID: urban-tanker-landing
