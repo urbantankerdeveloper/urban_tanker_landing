@@ -68,36 +68,39 @@ jobs:
           echo "Build successful. Files in dist:"
           ls -la dist/ | head -20
 
-      - name: Deploy to Firebase Hosting (Preview) - Service Account
-        if: github.event_name == 'pull_request' && secrets.FIREBASE_SERVICE_ACCOUNT_JSON != ''
+      - name: Deploy Preview to Firebase Hosting
+        if: github.event_name == 'pull_request'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           projectId: urban-tanker-landing
           channelId: live
+        continue-on-error: true
 
-      - name: Deploy to Firebase Hosting (Preview) - CLI Token
-        if: github.event_name == 'pull_request' && secrets.FIREBASE_CI_TOKEN != ''
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Deploy Preview to Firebase with CLI Token
+        if: github.event_name == 'pull_request' && failure()
+        uses: w9jds/firebase-action@master
         with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseToken: ${{ secrets.FIREBASE_CI_TOKEN }}
-          projectId: urban-tanker-landing
-          channelId: live
+          args: hosting:channel:deploy pr-${{ github.event.pull_request.number }} --project urban-tanker-landing --only urban-tanker-landing --token ${{ secrets.FIREBASE_CI_TOKEN }}
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_CI_TOKEN }}
+          PROJECT_ID: urban-tanker-landing
 
-      - name: Deploy to Firebase Hosting (Production) - Service Account
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.FIREBASE_SERVICE_ACCOUNT_JSON != ''
+      - name: Deploy Production to Firebase Hosting
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           projectId: urban-tanker-landing
+        continue-on-error: true
 
-      - name: Deploy to Firebase Hosting (Production) - CLI Token
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.FIREBASE_CI_TOKEN != ''
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Deploy Production to Firebase with CLI Token
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && failure()
+        uses: w9jds/firebase-action@master
         with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseToken: ${{ secrets.FIREBASE_CI_TOKEN }}
-          projectId: urban-tanker-landing
+          args: deploy --only hosting:urban-tanker-landing --token ${{ secrets.FIREBASE_CI_TOKEN }}
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_CI_TOKEN }}
+          PROJECT_ID: urban-tanker-landing
