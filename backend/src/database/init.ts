@@ -1,7 +1,11 @@
 import { getDatabase } from './connection.js';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const collections = {
   users: {
@@ -265,7 +269,7 @@ const collections = {
         discount: { bsonType: ['int', 'long', 'double', 'decimal'] },
         service: { bsonType: ['string', 'null'] },
         firstBooking: { bsonType: 'bool' },
-        target_role: { enum: ['all', 'customer', 'vendor', 'admin'], default: 'all' },
+        target_role: { enum: ['all', 'customer', 'vendor', 'admin'] },
         active: { bsonType: 'bool' },
         created_at: { bsonType: 'date' },
         updated_at: { bsonType: 'date' },
@@ -343,6 +347,169 @@ const collections = {
   },
 };
 
+/**
+ * Load database configuration from content.config.json
+ */
+function loadDbConfiguration() {
+  try {
+    const configPath = resolve(__dirname, '../../content.config.json');
+    const configFile = readFileSync(configPath, 'utf-8');
+    const config = JSON.parse(configFile);
+    
+    if (!config.dbConfiguration) {
+      console.warn('⚠️  No dbConfiguration section found in content.config.json, using defaults');
+      return getDefaultConfiguration();
+    }
+    
+    return config.dbConfiguration;
+  } catch (error) {
+    console.warn('⚠️  Failed to load dbConfiguration from content.config.json:', error);
+    return getDefaultConfiguration();
+  }
+}
+
+/**
+ * Fallback default configuration if content.config.json is not available
+ */
+function getDefaultConfiguration() {
+  return {
+    emergency_pricing: {
+      enabled: true,
+      surgePricePercentage: 50,
+      applicableServices: ['Water tanker'],
+      maxDeliveryTime: 30,
+      minBaseAmount: 500,
+      description: 'Emergency delivery pricing configuration',
+    },
+    subscription_plans: {
+      plans: [
+        {
+          id: 'plan-silver',
+          name: 'Silver',
+          description: 'Perfect for occasional use',
+          billingCycle: 'monthly',
+          price: 3000,
+          deliveriesIncluded: 2,
+          discountPercentage: 10,
+          features: [
+            '2 deliveries per month',
+            '10% discount on each delivery',
+            'Priority support',
+            'Order history',
+          ],
+          active: true,
+        },
+        {
+          id: 'plan-gold',
+          name: 'Gold',
+          description: 'Most popular plan',
+          billingCycle: 'monthly',
+          price: 6500,
+          deliveriesIncluded: 5,
+          discountPercentage: 15,
+          features: [
+            '5 deliveries per month',
+            '15% discount on each delivery',
+            'Priority support',
+            'Free emergency delivery (1x)',
+            'Order history & reports',
+          ],
+          active: true,
+        },
+        {
+          id: 'plan-platinum',
+          name: 'Platinum',
+          description: 'Unlimited power',
+          billingCycle: 'monthly',
+          price: 10000,
+          deliveriesIncluded: 999,
+          discountPercentage: 25,
+          features: [
+            'Unlimited deliveries',
+            '25% discount on every delivery',
+            '24/7 dedicated support',
+            'Free emergency delivery (unlimited)',
+            'Advanced analytics & reports',
+            'Priority scheduling',
+          ],
+          active: true,
+        },
+      ],
+      description: 'Subscription plan definitions',
+    },
+    wallet_config: {
+      maxWalletBalance: 50000,
+      minAddFundsAmount: 500,
+      maxAddFundsAmount: 10000,
+      maxRefundAmount: 5000,
+      autoRefundEnabled: true,
+      refundTTLDays: 30,
+      description: 'Wallet configuration for customer payment wallets',
+    },
+    guest_order_config: {
+      expiryMinutes: 30,
+      otpLength: 6,
+      maxOtpAttempts: 3,
+      maxConversionTime: 1440,
+      description: 'Guest checkout configuration for unregistered users',
+    },
+    invoice_config: {
+      gstPercentage: 5,
+      invoicePrefix: 'INV',
+      billDueInDays: 7,
+      companyDetails: {
+        name: 'Urban Tanker Services',
+        gstin: '18AAAAR5055K1Z5',
+        address: 'Bangalore, India',
+        email: 'billing@urbantanker.com',
+        phone: '+91-80-XXXX-XXXX',
+      },
+      description: 'Invoice and billing configuration',
+    },
+  };
+}
+
+/**
+ * Seed configuration values to MongoDB configs collection
+ */
+async function seedConfigurations(db) {
+  const configsCollection = db.collection('configs');
+  const dbConfig = loadDbConfiguration();
+
+  try {
+    // Seed all configuration types from content.config.json
+    const configTypes = Object.keys(dbConfig);
+    
+    for (const configType of configTypes) {
+      const configData = dbConfig[configType];
+      const description = configData.description || `${configType} configuration`;
+      
+      // Extract data object (handle both direct data and nested 'data' property)
+      const data = configData.data || configData;
+      
+      await configsCollection.updateOne(
+        { configType },
+        {
+          $set: {
+            configType,
+            data,
+            description,
+            updatedAt: new Date(),
+            updatedBy: 'system:seed',
+          },
+        },
+        { upsert: true }
+      );
+      console.log(`  ✅ ${configType} config seeded`);
+    }
+
+    console.log('✅ All configurations seeded successfully from content.config.json!');
+  } catch (error) {
+    console.error('❌ Error seeding configurations:', error);
+    throw error;
+  }
+}
+
 async function ensureCollection(db, name, validator) {
   const exists = await db.listCollections({ name }, { nameOnly: true }).hasNext();
   if (!exists) {
@@ -386,7 +553,7 @@ async function loadConfiguredContent(db) {
     console.log(`Loaded configured content for client ${clientId}`);
   } catch (error) {
     if (!process.env.CONTENT_CONFIG_PATH && !configuredJson && error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
-    throw new Error(`Unable to load configured content: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Unable to load configured content: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
 }
 
@@ -501,6 +668,12 @@ const initDatabase = async () => {
     await db.collection('sessions').createIndex({ token_hash: 1, client_id: 1 }, { unique: true, name: 'session_token_client' });
 
     console.log('✅ MongoDB collections and indexes initialized');
+    
+    // Seed configuration values from content.config.json
+    console.log('📊 Seeding configuration values to database...');
+    await seedConfigurations(db);
+    console.log('✅ Configuration seeded successfully');
+    
     process.exit(0);
   } catch (error) {
     console.error('❌ MongoDB initialization error:', error);

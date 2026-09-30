@@ -2,8 +2,6 @@
 // Moves cryptographic operations off the main thread
 // Usage: new Worker(new URL('cryptoWorker.ts', import.meta.url), { type: 'module' })
 
-import { AES_KEY_SIZE, IV_SIZE } from '../lib/apiConfig';
-
 interface EncryptMessage {
   type: 'encrypt';
   data: string;
@@ -19,7 +17,7 @@ interface DecryptMessage {
   keyBase64: string;
 }
 
-interface WorkerResponse {
+interface CryptoWorkerResponse {
   type: 'success' | 'error';
   data?: string;
   error?: string;
@@ -66,15 +64,15 @@ self.onmessage = async (event: MessageEvent<EncryptMessage | DecryptMessage>) =>
     if (event.data.type === 'encrypt') {
       const msg = event.data as EncryptMessage;
       const result = await encrypt(msg.data, msg.keyBase64, msg.nonceBase64);
-      self.postMessage({ type: 'success', data: result } as WorkerResponse);
+      self.postMessage({ type: 'success', data: result } as CryptoWorkerResponse);
     } else if (event.data.type === 'decrypt') {
       const msg = event.data as DecryptMessage;
       const result = await decrypt(msg.encryptedBase64, msg.nonceBase64, msg.tagBase64, msg.keyBase64);
-      self.postMessage({ type: 'success', data: result } as WorkerResponse);
+      self.postMessage({ type: 'success', data: result } as CryptoWorkerResponse);
     } else {
-      self.postMessage({ type: 'error', error: 'Unknown message type' } as WorkerResponse);
+      self.postMessage({ type: 'error', error: 'Unknown message type' } as CryptoWorkerResponse);
     }
   } catch (error) {
-    self.postMessage({ type: 'error', error: String(error) } as WorkerResponse);
+    self.postMessage({ type: 'error', error: String(error) } as CryptoWorkerResponse);
   }
 };

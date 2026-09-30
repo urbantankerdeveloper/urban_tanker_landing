@@ -51,8 +51,8 @@ function createUserObject(data: AuthResponse['user'], token: string): LocalUser 
 
 function persistUser(user: LocalUser): LocalUser {
   currentUser = user;
-  localStorage.setItem(TOKEN_KEY, user.idToken);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  sessionStorage.setItem(TOKEN_KEY, user.idToken);
+  sessionStorage.setItem(USER_KEY, JSON.stringify(user));
   notifyAuthStateChange(user);
   return user;
 }
@@ -122,7 +122,7 @@ export async function completePasswordReset(email: string, token: string, passwo
 }
 
 export async function signOutUser(): Promise<void> {
-  const token = localStorage.getItem(TOKEN_KEY);
+  const token = sessionStorage.getItem(TOKEN_KEY);
   
   if (token) {
     try {
@@ -141,8 +141,8 @@ export async function signOutUser(): Promise<void> {
   
   currentUser = null;
   await signOut(googleAuth).catch(() => undefined);
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(USER_KEY);
   notifyAuthStateChange(null);
 }
 
@@ -165,7 +165,7 @@ function notifyAuthStateChange(user: LocalUser | null) {
 }
 
 export function getAuthToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function getCurrentUser(): LocalUser | null {
@@ -174,8 +174,8 @@ export function getCurrentUser(): LocalUser | null {
 
 // Check for existing session on initialization
 export function initializeAuth() {
-  const token = localStorage.getItem(TOKEN_KEY);
-  const userJson = localStorage.getItem(USER_KEY);
+  const token = sessionStorage.getItem(TOKEN_KEY);
+  const userJson = sessionStorage.getItem(USER_KEY);
   
   if (token && userJson) {
     try {
@@ -190,8 +190,8 @@ export function initializeAuth() {
       notifyAuthStateChange(currentUser);
     } catch (error) {
       console.error('Failed to restore session:', error);
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(USER_KEY);
     }
   }
 }

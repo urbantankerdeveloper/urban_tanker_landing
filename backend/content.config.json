@@ -1,5 +1,100 @@
 {
   "client_id": "urban-tanker",
+  "dbConfiguration": {
+    "emergency_pricing": {
+      "enabled": true,
+      "surgePricePercentage": 50,
+      "applicableServices": ["Water tanker"],
+      "maxDeliveryTime": 30,
+      "minBaseAmount": 500,
+      "description": "Emergency/surge pricing configuration for immediate delivery bookings"
+    },
+    "subscription_plans": {
+      "plans": [
+        {
+          "id": "plan-silver",
+          "name": "Silver",
+          "description": "Perfect for occasional use",
+          "billingCycle": "monthly",
+          "price": 3000,
+          "deliveriesIncluded": 2,
+          "discountPercentage": 10,
+          "features": [
+            "2 deliveries per month",
+            "10% discount on each delivery",
+            "Priority support",
+            "Order history"
+          ],
+          "active": true
+        },
+        {
+          "id": "plan-gold",
+          "name": "Gold",
+          "description": "Most popular plan",
+          "billingCycle": "monthly",
+          "price": 6500,
+          "deliveriesIncluded": 5,
+          "discountPercentage": 15,
+          "features": [
+            "5 deliveries per month",
+            "15% discount on each delivery",
+            "Priority support",
+            "Free emergency delivery (1x)",
+            "Order history & reports"
+          ],
+          "active": true
+        },
+        {
+          "id": "plan-platinum",
+          "name": "Platinum",
+          "description": "Unlimited power",
+          "billingCycle": "monthly",
+          "price": 10000,
+          "deliveriesIncluded": 999,
+          "discountPercentage": 25,
+          "features": [
+            "Unlimited deliveries",
+            "25% discount on every delivery",
+            "24/7 dedicated support",
+            "Free emergency delivery (unlimited)",
+            "Advanced analytics & reports",
+            "Priority scheduling"
+          ],
+          "active": true
+        }
+      ],
+      "description": "Subscription plans for recurring customers"
+    },
+    "wallet_config": {
+      "maxWalletBalance": 50000,
+      "minAddFundsAmount": 500,
+      "maxAddFundsAmount": 10000,
+      "maxRefundAmount": 5000,
+      "autoRefundEnabled": true,
+      "refundTTLDays": 30,
+      "description": "Wallet configuration for customer payment wallets"
+    },
+    "guest_order_config": {
+      "expiryMinutes": 30,
+      "otpLength": 6,
+      "maxOtpAttempts": 3,
+      "maxConversionTime": 1440,
+      "description": "Guest checkout configuration for unregistered users"
+    },
+    "invoice_config": {
+      "gstPercentage": 5,
+      "invoicePrefix": "INV",
+      "billDueInDays": 7,
+      "companyDetails": {
+        "name": "Urban Tanker Services",
+        "gstin": "18AAAAR5055K1Z5",
+        "address": "Bangalore, India",
+        "email": "billing@urbantanker.com",
+        "phone": "+91-80-XXXX-XXXX"
+      },
+      "description": "Invoice and billing configuration"
+    }
+  },
   "config": {
     "brand": {
       "name": "Urban Tanker",

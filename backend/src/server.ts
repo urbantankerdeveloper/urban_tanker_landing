@@ -6,11 +6,15 @@ import { createHash, createHmac, randomInt, randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.js';
 import platformRoutes from './routes/platform.js';
+import guestOrderRoutes from './routes/guestOrders.js';
+import walletRoutes from './routes/wallet.js';
+import subscriptionRoutes from './routes/subscriptions.js';
+import invoiceRoutes from './routes/invoices.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerCustomerRoutes } from './routes/customer.js';
 import { registerSharedRoutes } from './routes/shared.js';
 import { registerVendorRoutes } from './routes/vendor.js';
-import { closeConnection, contentCollection, couponsCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, supportRequestsCollection, vendorsCollection, usersCollection, vehiclesCollection, savedAddressesCollection, offersCollection } from './database/connection.js';
+import { closeConnection, contentCollection, couponsCollection, driversCollection, getDatabase, invoicesCollection, notificationsCollection, orderHistoryCollection, ordersCollection, sessionsCollection, subscriptionsCollection, supportRequestsCollection, vendorsCollection, usersCollection, vehiclesCollection, savedAddressesCollection, offersCollection, initializeCollections } from './database/connection.js';
 import { authenticateToken } from './middleware/auth.js';
 import { idempotencyMiddleware } from './middleware/idempotency.js';
 import Razorpay from 'razorpay';
@@ -838,6 +842,10 @@ registerSharedRoutes(app, {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api', platformRoutes);
+app.use('/api', guestOrderRoutes);
+app.use('/api', walletRoutes);
+app.use('/api', subscriptionRoutes);
+app.use('/api', invoiceRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -853,22 +861,46 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Urban Tanker Backend running on http://0.0.0.0:${PORT}`);
-  console.log(`📝 Health check: http://localhost:${PORT}/health`);
-  void scanUnacceptedOrders().catch(error => console.error('Initial unaccepted order scan error:', error));
-});
-const unacceptedOrderScanTimer = setInterval(() => { void scanUnacceptedOrders().catch(error => console.error('Unaccepted order scan error:', error)); }, 60_000);
+// Initialize database before starting server
+async function initializeDatabase() {
+  try {
+    console.log('🔧 Initializing database collections and indexes...');
+    await initializeCollections();
+    console.log('✅ Collections and configurations initialized successfully');
+  } catch (error) {
+    console.error('❌ Database initialization failed:', error);
+    process.exit(1);
+  }
+}
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received. Closing server...');
-  await flushMonitoring();
-  clearInterval(unacceptedOrderScanTimer);
-  await closeConnection();
-  process.exit(0);
-});
+// Start server
+let unacceptedOrderScanTimer: NodeJS.Timeout;
+
+(async () => {
+  try {
+    await initializeDatabase();
+    
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 Urban Tanker Backend running on http://0.0.0.0:${PORT}`);
+      console.log(`📝 Health check: http://localhost:${PORT}/health`);
+      void scanUnacceptedOrders().catch(error => console.error('Initial unaccepted order scan error:', error));
+    });
+    
+    unacceptedOrderScanTimer = setInterval(() => { void scanUnacceptedOrders().catch(error => console.error('Unaccepted order scan error:', error)); }, 60_000);
+
+    // Graceful shutdown
+    process.on('SIGTERM', async () => {
+      console.log('SIGTERM received. Closing server...');
+      await flushMonitoring();
+      clearInterval(unacceptedOrderScanTimer);
+      await closeConnection();
+      process.exit(0);
+    });
+  } catch (error) {
+    console.error('🔥 Failed to start server:', error);
+    process.exit(1);
+  }
+})();
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received. Closing server...');

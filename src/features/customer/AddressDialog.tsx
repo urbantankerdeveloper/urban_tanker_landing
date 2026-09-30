@@ -69,6 +69,7 @@ export function AddressDialog({ address, onClose, onSave }: AddressDialogProps) 
       pincode: form.pincode,
       latitude: form.latitude,
       longitude: form.longitude,
+      isActive: true,
       createdAt: address?.createdAt || new Date().toISOString(),
     };
 

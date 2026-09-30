@@ -1,7 +1,7 @@
-import { getCurrentUser } from '../../features/auth/auth';
+import { getCurrentUser, getAuthToken } from '../../features/auth/auth';
 import { API_BASE_URL } from './apiConfig';
 import { readEncryptedContent, readEncryptedState, saveEncryptedContent, saveEncryptedState } from './secureCache';
-import type { AppData, Profile, Role, Vehicle, Vendor } from './types';
+import type { AppData, Profile, Role, Vehicle, Vendor, SavedAddress } from './types';
 import type { CouponContent } from './content';
 import { notificationsResponseSchema, orderHistoryItemSchema, parseApiResponse } from './apiSchemas';
 
@@ -43,7 +43,11 @@ export async function subscribeToContent(clientId: string, onContent: CloudState
     const request = cachedContent
       ? Promise.resolve(cachedContent)
       : contentRequests.get(cacheKey) || (() => {
-        const promise = fetch(`${API_BASE_URL}${endpoint}`)
+        const promise = fetch(`${API_BASE_URL}${endpoint}`, {
+          headers: !isPublic ? {
+            'Authorization': `Bearer ${getAuthToken()}`
+          } : undefined
+        })
           .then(async response => {
             if (!response.ok) throw new Error('Content configuration request failed.');
             const content = await response.json() as CloudState;
@@ -72,7 +76,12 @@ export async function loadContent(clientId: string, isPublic = false): Promise<C
   const endpoint = isPublic 
     ? `/api/content/${encodeURIComponent(clientId)}/public`
     : `/api/content/${encodeURIComponent(clientId)}`;
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, { cache: 'no-store' });
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, { 
+    cache: 'no-store',
+    headers: !isPublic ? {
+      'Authorization': `Bearer ${getAuthToken()}`
+    } : undefined
+  });
   if (!response.ok) throw new Error('Unable to refresh content configuration.');
   return await response.json() as CloudState;
 }
