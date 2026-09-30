@@ -1,8 +1,8 @@
-import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupee, MapPin, MessageSquare, Package, Phone, Plus, RefreshCcw, ShieldCheck, Truck, X } from 'lucide-react';
+import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupee, MapPin, MessageSquare, Package, Phone, Plus, RefreshCcw, ShieldCheck, Truck, X, AlertCircle } from 'lucide-react';
 import { money } from '../../shared/data/demo';
-import type { AppData, BookingDraft, Order, SavedAddress, Workspace } from '../../shared/lib/types';
+import type { AppData, BookingDraft, Order, SavedAddress, Workspace, SupportRequest } from '../../shared/lib/types';
 import { useAppStore } from '../../app/store';
-import { cancelCustomerOrder, createCustomerSubscription, createSavedAddress, createSupportRequest, deleteSavedAddress, loadCustomerInvoices, loadCustomerOrders, loadCustomerSubscriptions, loadSavedAddresses, rateCustomerOrder, rescheduleCustomerOrder, updateSavedAddress } from '../../shared/lib/cloudStore';
+import { cancelCustomerOrder, createCustomerSubscription, createSavedAddress, createSupportRequest, deleteSavedAddress, loadCustomerInvoices, loadCustomerOrders, loadCustomerSubscriptions, loadSavedAddresses, loadSupportRequests, rateCustomerOrder, rescheduleCustomerOrder, updateSavedAddress } from '../../shared/lib/cloudStore';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import { LiveMapModal } from '../../shared/components/LiveMapModal';
@@ -839,11 +839,20 @@ function AddressDialog({ address, onClose, onSave }: { address: SavedAddress | n
 
 function SupportView({ data, onNotify }: { data: AppData; onNotify: (message: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [requests, setRequests] = useState<SupportRequest[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(true);
   const activeOrder = data.orders.find(order => order.status !== 'Delivered');
   const [name, setName] = useState(data.profile?.name || '');
   const [orderId, setOrderId] = useState(activeOrder?.id || '');
   const [message, setMessage] = useState('');
   const supportDedup = useRequestDedup({ operationType: 'create_support_request' });
+
+  useEffect(() => {
+    void loadSupportRequests()
+      .then(setRequests)
+      .catch(error => onNotify(error instanceof Error ? error.message : 'Unable to load support requests.'))
+      .finally(() => setRequestsLoading(false));
+  }, [onNotify]);
 
   const submitRequest = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -861,7 +870,11 @@ function SupportView({ data, onNotify }: { data: AppData; onNotify: (message: st
         () => createSupportRequest({ subject, message: body, orderId: orderId || undefined }),
         STANDARD_OPERATION_RETRY
       );
+      // Reset form and reload requests
+      setMessage('');
       setOpen(false);
+      const updated = await loadSupportRequests();
+      setRequests(updated);
       onNotify('Support request sent to the operations team.');
     } catch (error) {
       onNotify(error instanceof Error ? error.message : 'Unable to send support request.');
@@ -870,9 +883,79 @@ function SupportView({ data, onNotify }: { data: AppData; onNotify: (message: st
     }
   };
 
-  return <><PageHeader eyebrow="Customer support" title="How can we help?" copy="Our Chennai team is available for bookings, payments, tanker access, and account questions." /><div className="support-grid"><div className="support-card"><MessageSquare size={22} /><h3>Message support</h3><p>Describe the issue and include your order ID. We usually respond within 15 minutes.</p><Button variant="primary" icon={ArrowRight} onClick={() => setOpen(true)}>Start a request</Button></div><div className="support-card"><Phone size={22} /><h3>Call dispatch</h3><p>For an active delivery, connect directly with our operations desk.</p><Button variant="quiet" icon={Phone} onClick={() => onNotify('Calling dispatch is available in production mode')}>+91 44 4012 2200</Button></div></div>{open && <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}><section className="modal support-dialog" role="dialog" aria-modal="true" aria-labelledby="support-title"><button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close support request"><X size={18} /></button><span className="eyebrow">Customer support</span><h2 id="support-title">Send us a message.</h2><p className="modal-copy">We will open your email client with the request details ready to send.</p><form className="support-form" onSubmit={submitRequest}><label htmlFor="support-name">Name<input id="support-name" value={name} onChange={event => setName(event.target.value)} autoComplete="name" required /></label><label htmlFor="support-order">Order ID (optional)<input id="support-order" value={orderId} onChange={event => setOrderId(event.target.value)} placeholder="Order ID" /></label><label htmlFor="support-message">Message<textarea id="support-message" value={message} onChange={event => setMessage(event.target.value)} rows={5} placeholder="Tell us how we can help" required /></label><Button variant="primary full" type="submit" disabled={supportDedup.isLoading}>
-  {supportDedup.isLoading ? 'Sending...' : 'Submit request'} <ArrowRight size={16} />
-</Button></form></section></div>}</>;
+  const openNew = () => {
+    setName(data.profile?.name || '');
+    setOrderId(activeOrder?.id || '');
+    setMessage('');
+    setOpen(true);
+  };
+
+  return <>
+    <PageHeader eyebrow="Customer support" title="How can we help?" copy="Our Chennai team is available for bookings, payments, tanker access, and account questions." />
+    <div className="support-grid">
+      <div className="support-card"><MessageSquare size={22} /><h3>Message support</h3><p>Describe the issue and include your order ID. We usually respond within 15 minutes.</p><Button variant="primary" icon={ArrowRight} onClick={openNew}>Start a request</Button></div>
+      <div className="support-card"><Phone size={22} /><h3>Call dispatch</h3><p>For an active delivery, connect directly with our operations desk.</p><Button variant="quiet" icon={Phone} onClick={() => onNotify('Calling dispatch is available in production mode')}>+91 44 4012 2200</Button></div>
+    </div>
+    <section className="data-surface support-request-list">
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">Your support requests</span>
+          <h2>{requests.length} request{requests.length !== 1 ? 's' : ''}</h2>
+        </div>
+      </div>
+      {requestsLoading ? (
+        <div className="empty-state"><Clock3 size={28} /><h3>Loading requests...</h3></div>
+      ) : requests.length ? (
+        requests.map(request => (
+          <article className="support-request-row" key={request.id}>
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow">{new Date(request.created_at).toLocaleDateString('en-IN')}</span>
+                <h2>{request.subject}</h2>
+              </div>
+              <Status>{request.status}</Status>
+            </div>
+            <p>{request.message}</p>
+            {request.order_id && <small className="mono">Order: {request.order_id}</small>}
+            {request.status === 'resolved' && request.resolution && (
+              <div className="support-resolution">
+                <strong>Resolution:</strong> {request.resolution}
+              </div>
+            )}
+            {request.status === 'in-progress' && (
+              <div className="support-status-badge"><Clock3 size={14} /> Being reviewed by operations</div>
+            )}
+          </article>
+        ))
+      ) : (
+        <div className="empty-state"><MessageSquare size={28} /><h3>No support requests yet</h3><p>When you submit a request, it will appear here with updates and resolution status.</p></div>
+      )}
+    </section>
+    {open && (
+      <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && setOpen(false)}>
+        <section className="modal support-dialog" role="dialog" aria-modal="true" aria-labelledby="support-title">
+          <button className="modal-close" type="button" onClick={() => setOpen(false)} aria-label="Close support request"><X size={18} /></button>
+          <span className="eyebrow">Customer support</span>
+          <h2 id="support-title">Send us a message.</h2>
+          <p className="modal-copy">Describe your issue and we will get back to you within 15 minutes.</p>
+          <form className="support-form" onSubmit={submitRequest}>
+            <label htmlFor="support-name">Name
+              <input id="support-name" value={name} onChange={event => setName(event.target.value)} autoComplete="name" required />
+            </label>
+            <label htmlFor="support-order">Order ID (optional)
+              <input id="support-order" value={orderId} onChange={event => setOrderId(event.target.value)} placeholder="Order ID" />
+            </label>
+            <label htmlFor="support-message">Message
+              <textarea id="support-message" value={message} onChange={event => setMessage(event.target.value)} rows={5} placeholder="Tell us how we can help" required />
+            </label>
+            <Button variant="primary full" type="submit" disabled={supportDedup.isLoading}>
+              {supportDedup.isLoading ? 'Sending...' : 'Submit request'} <ArrowRight size={16} />
+            </Button>
+          </form>
+        </section>
+      </div>
+    )}
+  </>;
 }
 
 function OffersPage({ onSelectService }: { onSelectService: (service: BookingDraft['service']) => void }) {
