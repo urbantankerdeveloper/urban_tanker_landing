@@ -26,15 +26,6 @@
           "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
         }
       ]
-    },
-    {
-      "site": "urban-tanker-landing-preview",
-      "public": "dist",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ]
     }
   ]
 }

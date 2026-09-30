@@ -1,8 +1,8 @@
 import { Activity, ArrowRight, CalendarDays, Check, Clock3, Droplets, IndianRupee, MapPin, MessageSquare, Package, Phone, Plus, RefreshCcw, ShieldCheck, Truck, X, AlertCircle } from 'lucide-react';
 import { money } from '../../shared/data/demo';
-import type { AppData, BookingDraft, Order, SavedAddress, Workspace, SupportRequest } from '../../shared/lib/types';
+import type { AppData, BookingDraft, Order, SavedAddress, Workspace } from '../../shared/lib/types';
 import { useAppStore } from '../../app/store';
-import { cancelCustomerOrder, createCustomerSubscription, createSavedAddress, createSupportRequest, deleteSavedAddress, loadCustomerInvoices, loadCustomerOrders, loadCustomerSubscriptions, loadSavedAddresses, loadSupportRequests, rateCustomerOrder, rescheduleCustomerOrder, updateSavedAddress } from '../../shared/lib/cloudStore';
+import { cancelCustomerOrder, createCustomerSubscription, createSavedAddress, createSupportRequest, deleteSavedAddress, loadCustomerInvoices, loadCustomerOrders, loadCustomerSubscriptions, loadSavedAddresses, loadSupportRequests, rateCustomerOrder, rescheduleCustomerOrder, updateSavedAddress, type SupportRequest } from '../../shared/lib/cloudStore';
 import { Button, PageHeader, StatCard, Status } from '../../shared/components/ui';
 import { Pagination } from '../../shared/components/Pagination';
 import { LiveMapModal } from '../../shared/components/LiveMapModal';
