@@ -231,7 +231,7 @@ export function useThrottle<T>(value: T, delay: number = 300): T {
  * @returns Previous value
  */
 export function usePrevious<T>(value: T): T | undefined {
-  const ref = useRef<T>();
+  const ref = useRef<T | undefined>(undefined);
   
   useEffect(() => {
     ref.current = value;

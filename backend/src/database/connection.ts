@@ -51,9 +51,61 @@ export const invoicesCollection = db.collection<any>('invoices');
 export const supportRequestsCollection = db.collection<any>('support_requests');
 export const savedAddressesCollection = db.collection<any>('saved_addresses');
 
+// Phase 1.5: Database-backed collections (replacing in-memory storage)
+export const guestOrdersCollection = db.collection<any>('guest_orders');
+export const walletsCollection = db.collection<any>('wallets');
+export const subscriptionsDbCollection = db.collection<any>('subscriptions_v2');
+export const invoicesDbCollection = db.collection<any>('invoices_v2');
+export const configsCollection = db.collection<any>('configs');
+
 export async function closeConnection() {
   await client.close();
   console.log('MongoDB connection closed');
+}
+
+/**
+ * Initialize collections with indexes and validation
+ * Call this on application startup
+ */
+export async function initializeCollections() {
+  const database = await getDatabase();
+  
+  try {
+    // Initialize guest_orders collection
+    await database.collection('guest_orders').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+    await database.collection('guest_orders').createIndex({ id: 1 }, { unique: true });
+    await database.collection('guest_orders').createIndex({ guestEmail: 1 });
+    await database.collection('guest_orders').createIndex({ status: 1 });
+    console.log('✅ guest_orders collection initialized');
+
+    // Initialize wallets collection
+    await database.collection('wallets').createIndex({ uid: 1 }, { unique: true });
+    await database.collection('wallets').createIndex({ createdAt: -1 });
+    console.log('✅ wallets collection initialized');
+
+    // Initialize subscriptions_v2 collection
+    await database.collection('subscriptions_v2').createIndex({ id: 1 }, { unique: true });
+    await database.collection('subscriptions_v2').createIndex({ customerId: 1 });
+    await database.collection('subscriptions_v2').createIndex({ status: 1 });
+    console.log('✅ subscriptions_v2 collection initialized');
+
+    // Initialize invoices_v2 collection
+    await database.collection('invoices_v2').createIndex({ invoiceNumber: 1 }, { unique: true });
+    await database.collection('invoices_v2').createIndex({ orderId: 1 });
+    await database.collection('invoices_v2').createIndex({ customerId: 1 });
+    console.log('✅ invoices_v2 collection initialized');
+
+    // Initialize configs collection
+    await database.collection('configs').createIndex({ configType: 1 }, { unique: true });
+    console.log('✅ configs collection initialized');
+
+  } catch (error: any) {
+    if (error.message?.includes('IndexKeySpecsConflict')) {
+      console.log('ℹ️  Indexes already exist, skipping creation');
+    } else if (!error.message?.includes('exists')) {
+      console.warn('⚠️  Warning initializing collections:', error.message);
+    }
+  }
 }
 
 export default databasePromise;

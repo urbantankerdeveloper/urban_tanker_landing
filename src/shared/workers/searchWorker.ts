@@ -13,7 +13,7 @@ interface SearchMessage {
   sortOrder?: 'asc' | 'desc';
 }
 
-interface WorkerResponse {
+interface SearchWorkerResponse {
   type: 'success' | 'error';
   data?: any[];
   error?: string;

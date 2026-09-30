@@ -33,7 +33,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
     hashPassword,
   } = deps;
 
-  app.post('/api/admin/coupons', deps.authenticateToken, async (req: any, res: any) => {
+  app.post('/api/admin/coupons', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
       const code = String(req.body.code || '').trim().toUpperCase();
@@ -67,7 +67,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/admin/coupons/:couponId/status', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/admin/coupons/:couponId/status', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
       const active = req.body.active === true;
@@ -81,7 +81,7 @@ export function registerAdminRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/admin/coupons/:couponId', deps.authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/admin/coupons/:couponId', deps.authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
       const label = typeof req.body.label === 'string' ? req.body.label.trim() : undefined;
@@ -528,6 +528,100 @@ export function registerAdminRoutes(app: Express, deps: any) {
     } catch (error) {
       console.error('Admin driver creation error:', error);
       res.status(500).json({ message: 'Unable to create driver.' });
+    }
+  });
+
+  /**
+   * Configuration Management Endpoints
+   */
+
+  // GET /api/config/:configType
+  // Fetch configuration by type (accessible to all authenticated users for reading)
+  app.get('/api/config/:configType', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      const { configType } = req.params;
+      const db = await deps.getDatabase();
+      const configDoc = await db.collection('configs').findOne({ configType });
+
+      if (!configDoc) {
+        return res.status(404).json({ error: 'Configuration not found' });
+      }
+
+      res.json(configDoc.data);
+    } catch (error) {
+      console.error('Error fetching config:', error);
+      res.status(500).json({ error: 'Failed to fetch configuration' });
+    }
+  });
+
+  // PUT /api/admin/config/:configType
+  // Update configuration (admin only)
+  app.put('/api/admin/config/:configType', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({ message: 'Administrator access is required.' });
+      }
+
+      const { configType } = req.params;
+      const { data } = req.body;
+
+      if (!data || typeof data !== 'object') {
+        return res.status(400).json({ error: 'Configuration data is required and must be an object' });
+      }
+
+      const db = await deps.getDatabase();
+      const now = new Date();
+
+      const result = await db.collection('configs').findOneAndUpdate(
+        { configType },
+        {
+          $set: {
+            configType,
+            data,
+            updatedBy: req.user.uid,
+            updatedAt: now,
+            description: `Configuration for ${configType}`,
+          },
+        },
+        { upsert: true, returnDocument: 'after' }
+      );
+
+      console.log(`✅ Configuration ${configType} updated by ${req.user.uid}`);
+
+      res.json({
+        success: true,
+        message: `Configuration ${configType} updated successfully`,
+        config: result.value,
+      });
+    } catch (error) {
+      console.error('Error updating config:', error);
+      res.status(500).json({ error: 'Failed to update configuration' });
+    }
+  });
+
+  // GET /api/admin/config
+  // List all configurations (admin only)
+  app.get('/api/admin/config', deps.authenticateToken, async (req: any, res: any) => {
+    try {
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({ message: 'Administrator access is required.' });
+      }
+
+      const db = await deps.getDatabase();
+      const configs = await db.collection('configs').find({}).toArray();
+
+      res.json({
+        total: configs.length,
+        configs: configs.map((c) => ({
+          configType: c.configType,
+          description: c.description,
+          updatedAt: c.updatedAt,
+          updatedBy: c.updatedBy,
+        })),
+      });
+    } catch (error) {
+      console.error('Error listing configs:', error);
+      res.status(500).json({ error: 'Failed to list configurations' });
     }
   });
 }

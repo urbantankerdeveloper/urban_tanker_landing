@@ -3,7 +3,7 @@ import { initialState } from '../shared/data/demo';
 import { signOutUser } from '../features/auth/auth';
 import { persistCloudState } from '../shared/lib/cloudStore';
 import { saveEncryptedState } from '../shared/lib/secureCache';
-import type { AppData, AppPatch, BookingDraft, LocationDetails, Order, Role, Workspace } from '../shared/lib/types';
+import type { AppData, AppPatch, BookingDraft, LocationDetails, Order, Role, Workspace, GuestProfile, Wallet, CustomerSubscription } from '../shared/lib/types';
 import { defaultContent, type AppContent } from '../shared/lib/content';
 
 interface AppStore {
@@ -32,6 +32,13 @@ interface AppStore {
   adminQuery: string;
   vendorStage: Order['status'];
   bookingDraft: BookingDraft;
+  // Phase 1 Features
+  isEmergency: boolean;
+  bookingStep: 1 | 2 | 3;
+  isGuestCheckout: boolean;
+  guestProfile: GuestProfile | null;
+  walletBalance: number;
+  userSubscriptions: CustomerSubscription[];
   update: (patch: AppPatch) => void;
   setActive: (active: Workspace) => void;
   setRole: (role: Role) => void;
@@ -62,6 +69,13 @@ interface AppStore {
   setHydrated: (hydrated: boolean) => void;
   signOut: () => void;
   requestLocation: () => Promise<void>;
+  // Phase 1 Feature Setters
+  setIsEmergency: (isEmergency: boolean) => void;
+  setBookingStep: (step: 1 | 2 | 3) => void;
+  setIsGuestCheckout: (isGuest: boolean) => void;
+  setGuestProfile: (profile: GuestProfile | null) => void;
+  setWalletBalance: (balance: number) => void;
+  setUserSubscriptions: (subscriptions: CustomerSubscription[]) => void;
 }
 
 let toastTimer: number | undefined;
@@ -70,6 +84,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   data: initialState, content: defaultContent, isHydrated: false, active: 'overview', toast: '', mobileNav: false, checkoutOpen: false, sidebarCollapsed: false, searchQuery: '', searchOpen: false, online: typeof navigator === 'undefined' ? true : navigator.onLine, notificationOpen: false, notificationCount: 0,
   authRole: 'customer', authName: '', authEmail: '', authPassword: '', authPhone: '', authBusy: false, authError: '', authRememberMe: true, checkoutMethod: 'UPI', adminQuery: '',
   vendorStage: 'Created', bookingDraft: initialState.booking,
+  // Phase 1 Feature Defaults
+  isEmergency: false, bookingStep: 1, isGuestCheckout: false, guestProfile: null, walletBalance: 0, userSubscriptions: [],
   update: patch => {
     const next = { ...get().data, ...patch };
     set({ data: next });
@@ -133,7 +149,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       get().notify(permission === 'denied' ? 'Location permission was denied. Enter your address manually.' : 'Unable to read your current location.');
       resolve();
     }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
-  })
+  }),
+  // Phase 1 Feature Setters
+  setIsEmergency: isEmergency => set({ isEmergency }),
+  setBookingStep: bookingStep => set({ bookingStep }),
+  setIsGuestCheckout: isGuestCheckout => set({ isGuestCheckout }),
+  setGuestProfile: guestProfile => set({ guestProfile }),
+  setWalletBalance: walletBalance => set({ walletBalance }),
+  setUserSubscriptions: userSubscriptions => set({ userSubscriptions })
 }));
 
 export const hydrateCloudState = (cloudState: Record<string, unknown>) => {

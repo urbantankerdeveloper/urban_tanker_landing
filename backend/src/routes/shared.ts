@@ -41,7 +41,7 @@ export function registerSharedRoutes(app: Express, deps: any) {
     }
   });
 
-  app.post('/api/support/requests', authenticateToken, async (req: any, res: any) => {
+  app.post('/api/support/requests', authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       if (!['customer', 'vendor'].includes(req.user.role)) return res.status(403).json({ message: 'Customer or vendor access is required.' });
       const message = String(req.body.message || '').trim();
@@ -63,7 +63,7 @@ export function registerSharedRoutes(app: Express, deps: any) {
     res.json({ requests });
   });
 
-  app.patch('/api/support/requests/:requestId', authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/support/requests/:requestId', authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Administrator access is required.' });
     const status = ['open', 'in-progress', 'resolved'].includes(req.body.status) ? req.body.status : 'in-progress';
     const resolution = String(req.body.resolution || '').trim().slice(0, 5000);
@@ -86,7 +86,7 @@ export function registerSharedRoutes(app: Express, deps: any) {
     }
   });
 
-  app.patch('/api/notifications/:notificationId/read', authenticateToken, async (req: any, res: any) => {
+  app.patch('/api/notifications/:notificationId/read', authenticateToken, deps.idempotencyMiddleware, async (req: any, res: any) => {
     try {
       const recipientFilter = req.user.role === 'vendor' ? { $or: [{ recipient_role: 'vendor', recipient_uid: req.user.uid }, { recipient_role: 'vendor', recipient_uid: { $exists: false } }] } : { recipient_role: req.user.role, ...(req.user.role === 'customer' ? { recipient_uid: req.user.uid } : {}) };
       const result = await notificationsCollection.updateOne({ id: req.params.notificationId, client_id: req.user.clientId, ...recipientFilter }, { $set: { read_at: new Date() } });

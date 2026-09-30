@@ -29,6 +29,7 @@ export interface BookingDraft {
   address: string;
   landmark: string;
   notes: string;
+  isEmergency?: boolean;
 }
 
 export interface LocationDetails {
@@ -89,6 +90,18 @@ export interface Order {
   driverPhone?: string;
   driverActive?: boolean;
   statusHistory?: Array<{ status: OrderStatus; timestamp: string; actorUid?: string; actorRole?: Role; vendorUid?: string; rejectionReason?: string }>;
+  // New fields for Phase 1 features
+  isEmergency?: boolean;
+  emergencySurge?: number;
+  invoiceId?: string;
+  invoiceUrl?: string;
+  walletDeduction?: number;
+  subscriptionId?: string;
+  isGuestOrder?: boolean;
+  guestEmail?: string;
+  guestPhone?: string;
+  guestOtp?: string;
+  guestOtpVerified?: boolean;
 }
 
 export interface Vendor {
@@ -140,6 +153,117 @@ export interface Offer {
   updatedAt: string;
 }
 
+// Emergency Booking
+export interface EmergencyBookingConfig {
+  enabled: boolean;
+  surgePricePercentage: number;
+  availableServices: string[];
+  maxDeliveryTime: number; // minutes
+}
+
+// Guest Checkout
+export interface GuestProfile {
+  name: string;
+  email: string;
+  phone: string;
+  isGuest: true;
+}
+
+export interface GuestOrder extends Order {
+  isGuestOrder: true;
+  guestEmail: string;
+  guestPhone: string;
+  guestOtp?: string;
+  guestOtpVerified: boolean;
+  expiresAt: string; // 30 minutes from creation
+}
+
+// Wallet
+export interface WalletTransaction {
+  id: string;
+  type: 'credit' | 'debit' | 'refund';
+  amount: number;
+  description: string;
+  timestamp: string;
+  orderId?: string;
+  balance: number; // balance after transaction
+}
+
+export interface Wallet {
+  uid: string;
+  balance: number;
+  currency: string;
+  lastUpdated: string;
+  transactions: WalletTransaction[];
+  totalCredit: number;
+  totalDebit: number;
+}
+
+// Subscriptions
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  description: string;
+  billingCycle: 'monthly' | 'quarterly' | 'yearly';
+  price: number;
+  deliveriesIncluded: number;
+  discountPercentage: number;
+  features: string[];
+  active: boolean;
+}
+
+export interface CustomerSubscription {
+  id: string;
+  customerId: string;
+  planId: string;
+  planName: string;
+  status: 'active' | 'paused' | 'cancelled' | 'expired';
+  startDate: string;
+  renewalDate: string;
+  remainingDeliveries: number;
+  autoRenew: boolean;
+  subscriptionPrice: number;
+  nextBillingDate: string;
+}
+
+// Invoice
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  orderId: string;
+  date: string;
+  dueDate: string;
+  amount: number;
+  discount: number;
+  taxAmount: number;
+  totalAmount: number;
+  paymentMethod: string;
+  paymentId: string;
+  status: 'pending' | 'paid' | 'overdue' | 'cancelled';
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  vendorName: string;
+  billItems: Array<{
+    description: string;
+    quantity: number;
+    rate: number;
+    amount: number;
+  }>;
+  createdAt: string;
+  pdfUrl?: string;
+}
+
+// Booking Wizard State
+export interface BookingWizardState {
+  currentStep: 1 | 2 | 3;
+  isGuest: boolean;
+  guestProfile?: GuestProfile;
+  isEmergency: boolean;
+  verificationStatus: 'pending' | 'verified' | 'failed';
+  completedSteps: number[];
+}
+
 export interface AppData {
   role: Role;
   profile: Profile | null;
@@ -149,6 +273,9 @@ export interface AppData {
   vendors: Vendor[];
   savedAddresses: SavedAddress[];
   pendingBooking?: BookingDraft & { amount: number };
+  wallet?: Wallet;
+  subscriptions?: CustomerSubscription[];
+  invoices?: Invoice[];
 }
 
 export type AppPatch = Partial<AppData>;
